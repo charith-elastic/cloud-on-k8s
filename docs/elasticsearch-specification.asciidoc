@@ -31,6 +31,7 @@ Before you deploy and run ECK, take some time to look at the basic and advanced 
 
 [id="{p}-pod-template"]
 === Pod Template
+
 [%collapsible]
 ====
 Pod templates are the same you know and love from stateful sets and deployments. You can provide your own to add new settings, or merge settings with our defaults. For example, if you want to add new labels to your Pods, you can apply a Pod template as follows:
@@ -73,6 +74,7 @@ For more information on Pod templates, see the Kubernetes documentation:
 
 - https://kubernetes.io/docs/concepts/workloads/pods/pod-overview/#pod-templates[Pod Templates Overview]
 - https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.15/#podtemplatespec-v1-core[Pod Template Spec API Reference]
+
 ====
 
 [id="{p}-jvm-heap-size"]
@@ -85,6 +87,7 @@ To change the heap size of Elasticsearch, set the `ES_JAVA_OPTS` environment var
 If `ES_JAVA_OPTS` is not defined, the Elasticsearch default heap size of 1Gi will be in effect.
 
 See also: link:https://www.elastic.co/guide/en/elasticsearch/reference/current/heap-size.html[Elasticsearch documentation on setting the heap size]
+
 ====
 
 [id="{p}-node-configuration"]
@@ -165,6 +168,7 @@ spec:
 ----
 
 CAUTION: Using `emptyDir` is not recommended due to the high likelihood of permanent data loss.
+
 ====
 
 [id="{p}-http-settings-tls-sans"]
@@ -197,6 +201,7 @@ spec:
         - ip: 1.2.3.4
         - dns: hulk.example.com
 ----
+
 ====
 
 [id="{p}-virtual-memory"]
@@ -251,6 +256,7 @@ spec:
     config:
       index.store.type: niofs
 ----
+
 ====
 
 [id="{p}-custom-http-certificate"]
@@ -279,6 +285,7 @@ This is an example on how to create a Kubernetes TLS secret with a self-signed c
 $ openssl req -x509 -sha256 -nodes -newkey rsa:4096 -days 365 -subj "/CN=quickstart-es-http" -addext "subjectAltName=DNS:quickstart-es-http.default.svc" -keyout tls.key -out tls.crt
 $ kubectl create secret generic my-cert --from-file=ca.crt=tls.crt --from-file=tls.crt=tls.crt --from-file=tls.key=tls.key
 ----
+
 ====
 
 [id="{p}-es-secure-settings"]
@@ -311,6 +318,7 @@ spec:
 ----
 
 See <<{p}-snapshots,How to create automated snapshots>> for an example use case.
+
 ====
 
 [id="{p}-bundles-plugins"]
@@ -376,6 +384,7 @@ spec:
 
 <1> Elasticsearch runs by convention in a container called 'elasticsearch'
 <2> Assuming you have created a config map in the same namespace as Elasticsearch with the name 'synonyms' containing the synonyms file(s)
+
 ====
 
 [id="{p}-init-containers-plugin-downloads"]
@@ -405,6 +414,7 @@ spec:
 You can also override the Elasticsearch container image to use your own image with the plugins already installed, as described in the link:k8s-images.asciidoc[custom images doc]. The <<{p}-snapshots,snapshots>> document has more information on both these options. The Kubernetes document on https://kubernetes.io/docs/concepts/workloads/pods/init-containers/[init containers] has more information on their usage as well.
 
 The init container inherits the image of the main container image if one is not explicitly set. It also inherits the volume mounts as long as the name and mount path do not conflict. It also inherits the Pod name and IP address environment variables.
+
 ====
 
 [id="{p}-update-strategy"]
@@ -458,6 +468,7 @@ spec:
 * Currently, the operator has a limited understanding of the cluster topology and during the update might not pick the optimal order of Pods being added or removed. This can block the update process and you might need to specify a higher `maxSurge` than theoretically needed.
 
 If any of the above occurs, the operator generates logs to indicate that upscaling or downscaling are limited by `maxSurge` or `maxUnavailable` settings.
+
 ====
 
 [id="{p}-pod-disruption-budget"]
@@ -507,7 +518,8 @@ spec:
   podDisruptionBudget: {}
 ----
 
+====
+
 include::orchestration.asciidoc[]
 include::advanced-node-scheduling.asciidoc[]
 include::snapshots.asciidoc[]
-====
