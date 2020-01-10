@@ -21,7 +21,7 @@ var log = logf.Log.WithName("resource")
 // and reports them in a config map in the form of licensing information
 type ResourceReporter struct {
 	aggregator        Aggregator
-	licensingResolver LicensingResolver
+	licensingResolver *LicensingResolver
 }
 
 // NewResourceReporter returns a new ResourceReporter
@@ -31,9 +31,7 @@ func NewResourceReporter(client client.Client) ResourceReporter {
 		aggregator: Aggregator{
 			client: c,
 		},
-		licensingResolver: LicensingResolver{
-			client: c,
-		},
+		licensingResolver: NewLicensingResolver("", c),
 	}
 }
 

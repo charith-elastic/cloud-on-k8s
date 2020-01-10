@@ -14,10 +14,12 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/license"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 const (
@@ -27,6 +29,9 @@ const (
 	licensingCfgMapName = "elastic-licensing"
 	// Type represents the Elastic usage type used to mark the config map that stores licensing information
 	Type = "elastic-usage"
+
+	// licenseLevelLabel is the Prometheus label describing the licence level.
+	licenseLevelLabel = "license_level"
 )
 
 // LicensingInfo represents information about the operator license including the total memory of all Elastic managed
@@ -41,12 +46,50 @@ type LicensingInfo struct {
 
 // LicensingResolver resolves the licensing information of the operator
 type LicensingResolver struct {
-	operatorNs string
-	client     k8s.Client
+	operatorNS       string
+	client           k8s.Client
+	totalMemoryGauge *prometheus.GaugeVec
+	eruGauge         *prometheus.GaugeVec
+}
+
+func NewLicensingResolver(operatorNS string, client k8s.Client) *LicensingResolver {
+	totalMemoryGauge := registerGauge(prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "elastic",
+		Subsystem: "licensing",
+		Name:      "memory_gigabytes_total",
+		Help:      "Total memory used in GB",
+	}, []string{licenseLevelLabel}))
+
+	eruGauge := registerGauge(prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "elastic",
+		Subsystem: "licensing",
+		Name:      "enterprise_resource_units_total",
+		Help:      "Total enterprise resource units used",
+	}, []string{licenseLevelLabel}))
+
+	return &LicensingResolver{
+		operatorNS:       operatorNS,
+		client:           client,
+		totalMemoryGauge: totalMemoryGauge,
+		eruGauge:         eruGauge,
+	}
+}
+
+func registerGauge(gauge *prometheus.GaugeVec) *prometheus.GaugeVec {
+	err := crmetrics.Registry.Register(gauge)
+	if err != nil {
+		if existsErr, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			return existsErr.ExistingCollector.(*prometheus.GaugeVec)
+		} else {
+			panic(fmt.Errorf("failed to register licence information gauge: %w", err))
+		}
+	}
+
+	return gauge
 }
 
 // ToInfo returns licensing information given the total memory of all Elastic managed components
-func (r LicensingResolver) ToInfo(totalMemory resource.Quantity) (LicensingInfo, error) {
+func (r *LicensingResolver) ToInfo(totalMemory resource.Quantity) (LicensingInfo, error) {
 	ERUs := inEnterpriseResourceUnits(totalMemory)
 	memoryInGB := inGB(totalMemory)
 	operatorLicense, err := r.getOperatorLicense()
@@ -57,11 +100,14 @@ func (r LicensingResolver) ToInfo(totalMemory resource.Quantity) (LicensingInfo,
 	licenseLevel := r.getOperatorLicenseLevel(operatorLicense)
 	maxERUs := r.getMaxEnterpriseResourceUnits(operatorLicense)
 
+	r.totalMemoryGauge.With(prometheus.Labels{licenseLevelLabel: licenseLevel}).Set(memoryInGB)
+	r.eruGauge.With(prometheus.Labels{licenseLevelLabel: licenseLevel}).Set(float64(ERUs))
+
 	licensingInfo := LicensingInfo{
 		Timestamp:               time.Now().Format(time.RFC3339),
 		EckLicenseLevel:         licenseLevel,
-		TotalManagedMemory:      memoryInGB,
-		EnterpriseResourceUnits: ERUs,
+		TotalManagedMemory:      fmt.Sprintf("%0.2fGB", memoryInGB),
+		EnterpriseResourceUnits: strconv.FormatInt(ERUs, 10),
 	}
 
 	// include the max ERUs only for a non trial/basic license
@@ -73,7 +119,7 @@ func (r LicensingResolver) ToInfo(totalMemory resource.Quantity) (LicensingInfo,
 }
 
 // Save updates or creates licensing information in a config map
-func (r LicensingResolver) Save(info LicensingInfo, operatorNs string) error {
+func (r *LicensingResolver) Save(info LicensingInfo, operatorNs string) error {
 	data, err := info.toMap()
 	if err != nil {
 		return err
@@ -98,14 +144,14 @@ func (r LicensingResolver) Save(info LicensingInfo, operatorNs string) error {
 }
 
 // getOperatorLicense gets the operator license.
-func (r LicensingResolver) getOperatorLicense() (*license.EnterpriseLicense, error) {
-	checker := license.NewLicenseChecker(r.client, r.operatorNs)
+func (r *LicensingResolver) getOperatorLicense() (*license.EnterpriseLicense, error) {
+	checker := license.NewLicenseChecker(r.client, r.operatorNS)
 	return checker.CurrentEnterpriseLicense()
 }
 
 // getOperatorLicenseLevel gets the level of the operator license.
 // If no license is given, the defaultOperatorLicenseLevel is returned.
-func (r LicensingResolver) getOperatorLicenseLevel(lic *license.EnterpriseLicense) string {
+func (r *LicensingResolver) getOperatorLicenseLevel(lic *license.EnterpriseLicense) string {
 	if lic == nil {
 		return defaultOperatorLicenseLevel
 	}
@@ -115,7 +161,7 @@ func (r LicensingResolver) getOperatorLicenseLevel(lic *license.EnterpriseLicens
 // getMaxEnterpriseResourceUnits returns the maximum of enterprise resources units that is allowed for a given license.
 // For old style enterprise orchestration licenses which only have max_instances, the maximum of enterprise resources
 // units is derived by dividing max_instances by 2.
-func (r LicensingResolver) getMaxEnterpriseResourceUnits(lic *license.EnterpriseLicense) int {
+func (r *LicensingResolver) getMaxEnterpriseResourceUnits(lic *license.EnterpriseLicense) int {
 	if lic == nil {
 		return 0
 	}
@@ -127,17 +173,17 @@ func (r LicensingResolver) getMaxEnterpriseResourceUnits(lic *license.Enterprise
 }
 
 // inGB converts a resource.Quantity in gigabytes
-func inGB(q resource.Quantity) string {
+func inGB(q resource.Quantity) float64 {
 	// divide the value (in bytes) per 1 billion (1GB)
-	return fmt.Sprintf("%0.2fGB", float32(q.Value())/1000000000)
+	return float64(q.Value()) / 1000000000
 }
 
 // inEnterpriseResourceUnits converts a resource.Quantity to Elastic Enterprise resource units
-func inEnterpriseResourceUnits(q resource.Quantity) string {
+func inEnterpriseResourceUnits(q resource.Quantity) int64 {
 	// divide by the value (in bytes) per 64 billion (64 GB)
 	eru := float64(q.Value()) / 64000000000
 	// round to the nearest superior integer
-	return fmt.Sprintf("%d", int64(math.Ceil(eru)))
+	return int64(math.Ceil(eru))
 }
 
 // toMap transforms a LicensingInfo to a map of string, in order to fill in the data of a config map
