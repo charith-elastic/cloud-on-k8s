@@ -1,0 +1,12 @@
+:release_version: 1.1.0
+
+[id="{p}-eck-{release_version}"]
+= {n} {release_version}
+
+* <<release-notes-{release_version}>>
+* <<release-highlights-{release_version}>>
+* <<upgrade-guide-{release_version}>>
+
+include::release-notes.asciidoc[leveloffset=+1]
+include::highlights.asciidoc[leveloffset=+1]
+include::upgrade-guide.asciidoc[leveloffset=+1]

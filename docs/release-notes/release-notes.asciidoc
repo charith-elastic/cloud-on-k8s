@@ -1,0 +1,15 @@
+[[eck-release-notes]]
+= Releases
+
+[partintro]
+--
+* <<{p}-eck-1.1.0>>
+* <<{p}-eck-1.0.1>>
+* <<{p}-eck-1.0.0>>
+* <<{p}-eck-1.0.0-beta1>>
+--
+
+include::1.1.0/index.asciidoc[leveloffset=+1]
+include::1.0.1/index.asciidoc[leveloffset=+1]
+include::1.0.0/index.asciidoc[leveloffset=+1]
+include::1.0.0-beta1/index.asciidoc[leveloffset=+1]

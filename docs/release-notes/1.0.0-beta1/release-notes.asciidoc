@@ -2,11 +2,13 @@
 :pull: https://github.com/elastic/cloud-on-k8s/pull/
 
 [[release-notes-1.0.0-beta1]]
-== {n} version 1.0.0-beta1
+= Release notes
+
+{n} version 1.0.0-beta1
 
 [[breaking-1.0.0-beta1]]
 [float]
-=== Breaking changes
+== Breaking changes
 
 * Rename nodes to nodeSets, nodeCount to count {pull}1843[#1843]
 * Remove setVmMaxMapCount from Elasticsearch CRD {pull}1839[#1839] (issue: {issue}1712[#1712])
@@ -21,7 +23,7 @@
 
 [[enhancement-1.0.0-beta1]]
 [float]
-=== Enhancements
+== Enhancements
 
 * Log validation errors {pull}1942[#1942]
 * Disable serving prometheus metrics by default {pull}1930[#1930]
@@ -52,7 +54,7 @@
 
 [[bug-1.0.0-beta1]]
 [float]
-=== Bug fixes
+== Bug fixes
 
 * Manifest generation: prefix objects with YAML document separator {pull}1901[#1901]
 * Set BlockOwnerDeletion to false on PVCs {pull}1891[#1891]
@@ -73,5 +75,3 @@
 * Allow license secret webhook to fail {pull}1301[#1301]
 * Add HTTP certs to config checksum {pull}1267[#1267]
 * Respect TLSOptions for APM server {pull}1246[#1246]
-
-

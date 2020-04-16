@@ -2,24 +2,26 @@
 :pull: https://github.com/elastic/cloud-on-k8s/pull/
 
 [[release-notes-1.0.0]]
-== {n} version 1.0.0
+= Release notes
+
+{n} version 1.0.0
 
 [[breaking-1.0.0]]
 [float]
-=== Breaking changes
+== Breaking changes
 
 * Remove v1alpha1 CRD version and generate a single trivial all-in-one flavor {pull}2119[#2119] (issue: {issue}2044[#2044])
 
 
 [[feature-1.0.0]]
 [float]
-=== New features
+== New features
 
 * Report total memory under management for licensing {pull}2277[#2277]
 
 [[enhancement-1.0.0]]
 [float]
-=== Enhancements
+== Enhancements
 
 * Report max ERUs in the licensing info configmap {pull}2371[#2371]
 * Readiness probe: do not log tail errors {pull}2366[#2366]
@@ -48,7 +50,7 @@
 
 [[bug-1.0.0]]
 [float]
-=== Bug fixes
+== Bug fixes
 
 * Do not report max ERUs for basic licenses {pull}2377[#2377]
 * Fix v1beta1 webhook {pull}2358[#2358] (issue: {issue}2355[#2355])
@@ -82,6 +84,6 @@
 
 [[nogroup-1.0.0]]
 [float]
-=== Misc
+== Misc
 
 * Change rolling upgrades predicate log error to info level {pull}2099[#2099]

@@ -2,11 +2,13 @@
 :pull: https://github.com/elastic/cloud-on-k8s/pull/
 
 [[release-notes-1.1.0]]
-== {n} version 1.1.0
+= Release notes
+
+{n} version 1.1.0
 
 [[breaking-1.1.0]]
 [float]
-=== Breaking changes
+== Breaking changes
 
 * Remove operator roles {pull}2530[#2530]
 * Name container ports according to protocol {pull}2498[#2498] (issue: {issue}2483[#2483])
@@ -14,7 +16,7 @@
 
 [[feature-1.1.0]]
 [float]
-=== New features
+== New features
 
 * Add a tool to recreate a deleted cluster from existing PersistentVolumeClaims {pull}2551[#2551]
 * Add local K8S remote cluster support {pull}2543[#2543]
@@ -22,7 +24,7 @@
 
 [[enhancement-1.1.0]]
 [float]
-=== Enhancements
+== Enhancements
 
 * Improve secure string generation {pull}2794[#2794]
 * Rename pause annotation {pull}2783[#2783]
@@ -54,7 +56,7 @@
 
 [[bug-1.1.0]]
 [float]
-=== Bug fixes
+== Bug fixes
 
 * Fix labels on ES CA secret for Kibana association {pull}2773[#2773] (issue: {issue}2698[#2698])
 * Ensure that HTTP CA cert is always set {pull}2772[#2772]
@@ -68,5 +70,3 @@
 * Do not mutate object when validating unknown fields {pull}2536[#2536]
 * Mark the Version field required and adapt CRD generation for trivialVersions {pull}2480[#2480] (issues: {issue}2395[#2395], {issue}2479[#2479])
 * Cluster bootstrap: ignore ES error when retrieving cluster UUID {pull}2438[#2438]
-
-
