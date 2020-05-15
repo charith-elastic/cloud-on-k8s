@@ -7,6 +7,7 @@ package remotecluster
 import (
 	"context"
 	"sort"
+	"strings"
 
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/events"
@@ -144,14 +145,21 @@ func updateSettingsInternal(
 func getRemoteClustersInElasticsearch(esClient esclient.Client) (map[string]struct{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), esclient.DefaultReqTimeout)
 	defer cancel()
-	remoteClustersInEs := make(map[string]struct{})
+
 	remoteClusterSettings, err := esClient.GetRemoteClusterSettings(ctx)
 	if err != nil {
-		return remoteClustersInEs, err
+		return nil, err
 	}
+
+	remoteClustersInEs := make(map[string]struct{}, len(remoteClusterSettings.PersistentSettings.Cluster.RemoteClusters))
+
 	for remoteClusterName := range remoteClusterSettings.PersistentSettings.Cluster.RemoteClusters {
-		remoteClustersInEs[remoteClusterName] = struct{}{}
+		cn := strings.TrimSpace(remoteClusterName)
+		if cn != "" {
+			remoteClustersInEs[cn] = struct{}{}
+		}
 	}
+
 	return remoteClustersInEs, nil
 }
 

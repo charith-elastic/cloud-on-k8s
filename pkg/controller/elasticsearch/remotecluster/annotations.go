@@ -21,26 +21,40 @@ const (
 // A map is returned here to quickly compare with the ones that are new or missing.
 // If there's no remote clusters the map is empty but not nil.
 func getRemoteClustersInAnnotation(es esv1.Elasticsearch) map[string]struct{} {
-	remoteClusters := make(map[string]struct{})
 	serializedRemoteClusters, ok := es.Annotations[ManagedRemoteClustersAnnotationName]
 	if !ok {
-		return remoteClusters
+		return map[string]struct{}{}
 	}
-	for _, remoteClusterInAnnotation := range strings.Split(serializedRemoteClusters, ",") {
-		remoteClusters[remoteClusterInAnnotation] = struct{}{}
+
+	clusterNames := strings.Split(serializedRemoteClusters, ",")
+	remoteClusters := make(map[string]struct{}, len(clusterNames))
+
+	for _, clusterName := range clusterNames {
+		cn := strings.TrimSpace(clusterName)
+		if cn != "" {
+			remoteClusters[cn] = struct{}{}
+		}
 	}
+
 	return remoteClusters
 }
 
 func annotateWithCreatedRemoteClusters(c k8s.Client, es esv1.Elasticsearch, remoteClusters map[string]struct{}) error {
+	if len(remoteClusters) == 0 {
+		return nil
+	}
+
 	if es.Annotations == nil {
 		es.Annotations = make(map[string]string)
 	}
+
 	annotation := make([]string, 0, len(remoteClusters))
 	for remoteCluster := range remoteClusters {
 		annotation = append(annotation, remoteCluster)
 	}
+
 	sort.Strings(annotation)
 	es.Annotations[ManagedRemoteClustersAnnotationName] = strings.Join(annotation, ",")
+
 	return c.Update(&es)
 }
