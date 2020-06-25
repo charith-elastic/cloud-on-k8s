@@ -65,12 +65,13 @@ var (
 	}
 
 	ignore = map[string]bool{
-		">non-issue":   true,
-		">refactoring": true,
-		">docs":        true,
-		">test":        true,
-		":ci":          true,
-		"backport":     true,
+		">non-issue":                 true,
+		">refactoring":               true,
+		">docs":                      true,
+		">test":                      true,
+		":ci":                        true,
+		"backport":                   true,
+		"exclude-from-release-notes": true,
 	}
 )
 

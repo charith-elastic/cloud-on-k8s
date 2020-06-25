@@ -1,0 +1,6 @@
+[[release-highlights-1.2.0]]
+== 1.2.0 release highlights
+
+[float]
+[id="{p}-120-new-and-notable"]
+=== New and notable
