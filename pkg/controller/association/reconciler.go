@@ -36,9 +36,7 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/utils/rbac"
 )
 
-var (
-	defaultRequeue = reconcile.Result{Requeue: true, RequeueAfter: 10 * time.Second}
-)
+var defaultRequeue = reconcile.Result{Requeue: true, RequeueAfter: 10 * time.Second}
 
 // AssociationInfo contains information specific to a particular associated resource (eg. Kibana, APMServer, etc.).
 type AssociationInfo struct {
@@ -105,7 +103,7 @@ func (r *Reconciler) log(associated commonv1.Associated) logr.Logger {
 
 func (r *Reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	defer common.LogReconciliationRun(r.logger, request, fmt.Sprintf("%s_name", r.AssociatedShortName), &r.iteration)()
-	tx, ctx := tracing.NewTransaction(r.Tracer, request.NamespacedName, r.AssociationName)
+	tx, ctx := tracing.NewTransaction(tracing.Tracer(), request.NamespacedName, r.AssociationName)
 	defer tracing.EndTransaction(tx)
 
 	association := r.AssociationObjTemplate()

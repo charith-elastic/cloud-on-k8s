@@ -128,7 +128,7 @@ type ReconcileKibana struct {
 // in the Kibana.Spec
 func (r *ReconcileKibana) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	defer common.LogReconciliationRun(log, request, "kibana_name", &r.iteration)()
-	tx, ctx := tracing.NewTransaction(r.params.Tracer, request.NamespacedName, "kibana")
+	tx, ctx := tracing.NewTransaction(tracing.Tracer(), request.NamespacedName, "kibana")
 	defer tracing.EndTransaction(tx)
 
 	// retrieve the kibana object

@@ -10,10 +10,6 @@ import (
 	"fmt"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/record"
-	controller "sigs.k8s.io/controller-runtime/pkg/reconcile"
-
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
 	commondriver "github.com/elastic/cloud-on-k8s/pkg/controller/common/driver"
@@ -23,6 +19,7 @@ import (
 	commonlicense "github.com/elastic/cloud-on-k8s/pkg/controller/common/license"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/operator"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/reconciler"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/tracing"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/watches"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/bootstrap"
@@ -41,11 +38,12 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/user"
 	esversion "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/version"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/record"
+	controller "sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-var (
-	defaultRequeue = controller.Result{Requeue: true, RequeueAfter: 10 * time.Second}
-)
+var defaultRequeue = controller.Result{Requeue: true, RequeueAfter: 10 * time.Second}
 
 // Driver orchestrates the reconciliation of an Elasticsearch resource.
 // Its lifecycle is bound to a single reconciliation attempt.
@@ -193,6 +191,8 @@ func (d *defaultDriver) Reconcile(ctx context.Context) *reconciler.Results {
 		return results.WithError(err)
 	}
 
+	logger := tracing.LoggerFromContext(ctx)
+
 	if esReachable {
 		// reconcile the license
 		if err := license.Reconcile(ctx, d.Client, d.ES, esClient); err != nil {
@@ -201,7 +201,7 @@ func (d *defaultDriver) Reconcile(ctx context.Context) *reconciler.Results {
 				events.EventReasonUnexpected,
 				fmt.Sprintf("Could not update cluster license: %s", err.Error()),
 			)
-			log.Info("Could not update cluster license", "err", err, "namespace", d.ES.Namespace, "es_name", d.ES.Name)
+			logger.Info("Could not update cluster license", "err", err)
 			// don't error out the entire reconciliation, move on with next steps and retry later
 			results.WithResult(defaultRequeue)
 		}
@@ -211,7 +211,7 @@ func (d *defaultDriver) Reconcile(ctx context.Context) *reconciler.Results {
 		if err != nil {
 			msg := "Could not update remote clusters in Elasticsearch settings"
 			d.ReconcileState.AddEvent(corev1.EventTypeWarning, events.EventReasonUnexpected, msg)
-			log.Error(err, msg, "namespace", d.ES.Namespace, "es_name", d.ES.Name)
+			logger.Error(err, msg)
 			results.WithResult(defaultRequeue)
 		}
 		if requeue {

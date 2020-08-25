@@ -44,12 +44,10 @@ const (
 	controllerName = "enterprisesearch-controller"
 )
 
-var (
-	log = logf.Log.WithName(controllerName)
-)
+var log = logf.Log.WithName(controllerName)
 
 // Add creates a new EnterpriseSearch Controller and adds it to the Manager with default RBAC.
-//The Manager will set fields on the Controller and Start it when the Manager is Started.
+// The Manager will set fields on the Controller and Start it when the Manager is Started.
 func Add(mgr manager.Manager, params operator.Parameters) error {
 	reconciler := newReconciler(mgr, params)
 	c, err := common.NewController(mgr, controllerName, reconciler, params)
@@ -145,7 +143,7 @@ var _ driver.Interface = &ReconcileEnterpriseSearch{}
 // and what is in the EnterpriseSearch.Spec.
 func (r *ReconcileEnterpriseSearch) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	defer common.LogReconciliationRun(log, request, "ent_name", &r.iteration)()
-	tx, ctx := tracing.NewTransaction(r.Tracer, request.NamespacedName, "enterprisesearch")
+	tx, ctx := tracing.NewTransaction(tracing.Tracer(), request.NamespacedName, "enterprisesearch")
 	defer tracing.EndTransaction(tx)
 
 	var ent entv1beta1.EnterpriseSearch

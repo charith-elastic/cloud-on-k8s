@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/tracing"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
 	"go.elastic.co/apm"
 	"k8s.io/apimachinery/pkg/types"
@@ -21,7 +22,6 @@ var log = logf.Log.WithName("observer")
 type Settings struct {
 	ObservationInterval time.Duration
 	RequestTimeout      time.Duration
-	Tracer              *apm.Tracer
 }
 
 // Default values:
@@ -133,8 +133,8 @@ func (o *Observer) retrieveState(ctx context.Context) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, o.settings.RequestTimeout)
 	defer cancel()
 
-	if o.settings.Tracer != nil {
-		tx := o.settings.Tracer.StartTransaction(o.cluster.String(), "elasticsearch_observer")
+	if tracer := tracing.Tracer(); tracer != nil {
+		tx := tracer.StartTransaction(o.cluster.String(), "elasticsearch_observer")
 		defer tx.End()
 		timeoutCtx = apm.ContextWithTransaction(timeoutCtx, tx)
 	}

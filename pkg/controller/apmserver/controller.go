@@ -173,7 +173,7 @@ var _ driver.Interface = &ReconcileApmServer{}
 // and what is in the ApmServer.Spec
 func (r *ReconcileApmServer) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	defer common.LogReconciliationRun(log, request, "as_name", &r.iteration)()
-	tx, ctx := tracing.NewTransaction(r.Tracer, request.NamespacedName, "apmserver")
+	tx, ctx := tracing.NewTransaction(tracing.Tracer(), request.NamespacedName, "apmserver")
 	defer tracing.EndTransaction(tx)
 
 	var as apmv1.ApmServer

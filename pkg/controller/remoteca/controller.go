@@ -38,9 +38,7 @@ const (
 	EventReasonClusterCaCertNotFound = "ClusterCaCertNotFound"
 )
 
-var (
-	defaultRequeue = reconcile.Result{Requeue: true, RequeueAfter: 20 * time.Second}
-)
+var defaultRequeue = reconcile.Result{Requeue: true, RequeueAfter: 20 * time.Second}
 
 // Add creates a new RemoteCa Controller and adds it to the manager with default RBAC.
 func Add(mgr manager.Manager, accessReviewer rbac.AccessReviewer, params operator.Parameters) error {
@@ -84,7 +82,7 @@ type ReconcileRemoteCa struct {
 // It copies the remote CA Secrets so they can be trusted by every peer Elasticsearch clusters.
 func (r *ReconcileRemoteCa) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	defer common.LogReconciliationRun(log, request, "es_name", &r.iteration)()
-	tx, ctx := tracing.NewTransaction(r.Tracer, request.NamespacedName, "remoteca")
+	tx, ctx := tracing.NewTransaction(tracing.Tracer(), request.NamespacedName, "remoteca")
 	defer tracing.EndTransaction(tx)
 
 	// Fetch the local Elasticsearch spec

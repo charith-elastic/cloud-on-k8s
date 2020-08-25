@@ -5,24 +5,39 @@
 package tracing
 
 import (
+	"fmt"
+
 	"github.com/elastic/cloud-on-k8s/pkg/about"
+	"github.com/go-logr/logr"
 	"go.elastic.co/apm"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var (
-	log = logf.Log.WithName("tracing")
-)
+const serviceName = "elastic-operator"
 
-// NewTracer returns a new APM tracer with the logger in log configured.
-func NewTracer(serviceName string) *apm.Tracer {
+var tracer *apm.Tracer
+
+// InitTracer initializes the global tracer for the application.
+func InitTracer() error {
 	build := about.GetBuildInfo()
-	tracer, err := apm.NewTracer(serviceName, build.Version+"-"+build.Hash)
+
+	t, err := apm.NewTracer(serviceName, build.VersionString())
 	if err != nil {
-		// don't fail the application because tracing fails
-		log.Error(err, "failed to created tracer for "+serviceName)
-		return nil
+		return fmt.Errorf("failed to initialize tracer: %w", err)
 	}
-	tracer.SetLogger(NewLogAdapter(log))
+
+	tracer = t
+
+	return nil
+}
+
+// Tracer returns the currently configured tracer.
+func Tracer() *apm.Tracer {
 	return tracer
+}
+
+// SetLogger sets the logger for the tracer.
+func SetLogger(log logr.Logger) {
+	if tracer != nil {
+		tracer.SetLogger(NewLogAdapter(log))
+	}
 }
