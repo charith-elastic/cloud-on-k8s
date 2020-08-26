@@ -7,7 +7,6 @@ package beat
 import (
 	"context"
 
-	"go.elastic.co/apm"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -15,7 +14,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -44,8 +43,6 @@ import (
 const (
 	controllerName = "beat-controller"
 )
-
-var log = logf.Log.WithName(controllerName)
 
 // Add creates a new Beat Controller and adds it to the Manager with default RBAC. The Manager will set fields on the Controller
 // and Start it when the Manager is Started.
@@ -129,9 +126,13 @@ type ReconcileBeat struct {
 // Reconcile reads that state of the cluster for a Beat object and makes changes based on the state read
 // and what is in the Beat.Spec.
 func (r *ReconcileBeat) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	defer common.LogReconciliationRun(log, request, "beat_name", &r.iteration)()
-	tx, ctx := tracing.NewTransaction(tracing.Tracer(), request.NamespacedName, "beat")
-	defer tracing.EndTransaction(tx)
+	ctx := common.NewReconciliationContext(crlog.Log.WithName(controllerName), request.NamespacedName, "beat")
+	return tracing.TraceReconciliation(ctx, request, "beat", r.doReconcile)
+}
+
+func (r *ReconcileBeat) doReconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	logger := tracing.LoggerFromContext(ctx)
+	defer common.LogReconciliationRun(logger, request, &r.iteration)()
 
 	var beat beatv1beta1.Beat
 	if err := association.FetchWithAssociations(ctx, r.Client, request, &beat); err != nil {
@@ -139,16 +140,16 @@ func (r *ReconcileBeat) Reconcile(request reconcile.Request) (reconcile.Result, 
 			r.onDelete(request.NamespacedName)
 			return reconcile.Result{}, nil
 		}
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if common.IsUnmanaged(&beat) {
-		log.Info("Object is currently not managed by this controller. Skipping reconciliation", "namespace", beat.Namespace, "ent_name", beat.Name)
+		logger.Info("Object is currently not managed by this controller. Skipping reconciliation")
 		return reconcile.Result{}, nil
 	}
 
 	if compatible, err := r.isCompatible(ctx, &beat); err != nil || !compatible {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if beat.IsMarkedForDeletion() {
@@ -156,23 +157,31 @@ func (r *ReconcileBeat) Reconcile(request reconcile.Request) (reconcile.Result, 
 	}
 
 	if err := annotation.UpdateControllerVersion(ctx, r.Client, &beat, r.OperatorInfo.BuildInfo.Version); err != nil {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
-	res, err := r.doReconcile(ctx, beat).Aggregate()
+	res, err := r.internalReconcile(ctx, beat).Aggregate()
 	k8s.EmitErrorEvent(r.recorder, err, &beat, events.EventReconciliationError, "Reconciliation error: %v", err)
 
 	return res, err
 }
 
-func (r *ReconcileBeat) doReconcile(ctx context.Context, beat beatv1beta1.Beat) *reconciler.Results {
+func (r *ReconcileBeat) internalReconcile(ctx context.Context, beat beatv1beta1.Beat) *reconciler.Results {
 	results := reconciler.NewResult(ctx)
 	if !association.AreConfiguredIfSet(beat.GetAssociations(), r.recorder) {
 		return results
 	}
 
 	// Run validation in case the webhook is disabled
-	if err := r.validate(ctx, &beat); err != nil {
+	if err := tracing.DoInSpan(ctx, "validate", func(ctx context.Context) error {
+		if err := beat.ValidateCreate(); err != nil {
+			tracing.LoggerFromContext(ctx).Error(err, "Validation failed")
+			k8s.EmitErrorEvent(r.recorder, err, &beat, events.EventReasonValidation, err.Error())
+			return err
+		}
+
+		return nil
+	}); err != nil {
 		return results.WithError(err)
 	}
 
@@ -180,19 +189,6 @@ func (r *ReconcileBeat) doReconcile(ctx context.Context, beat beatv1beta1.Beat) 
 	results.WithResults(driverResults)
 
 	return results
-}
-
-func (r *ReconcileBeat) validate(ctx context.Context, beat *beatv1beta1.Beat) error {
-	span, vctx := apm.StartSpan(ctx, "validate", tracing.SpanTypeApp)
-	defer span.End()
-
-	if err := beat.ValidateCreate(); err != nil {
-		log.Error(err, "Validation failed")
-		k8s.EmitErrorEvent(r.recorder, err, beat, events.EventReasonValidation, err.Error())
-		return tracing.CaptureError(vctx, err)
-	}
-
-	return nil
 }
 
 func (r *ReconcileBeat) isCompatible(ctx context.Context, beat *beatv1beta1.Beat) (bool, error) {
@@ -219,7 +215,6 @@ func newDriver(
 	dp := beatcommon.DriverParams{
 		Client:        client,
 		Context:       ctx,
-		Logger:        log,
 		Watches:       dynamicWatches,
 		EventRecorder: recorder,
 		Beat:          beat,

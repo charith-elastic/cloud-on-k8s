@@ -17,7 +17,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -43,9 +42,12 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/user"
 	esversion "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/version"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/pkg/utils/log"
 )
 
 const name = "elasticsearch-controller"
+
+var logger = log.WithName(name)
 
 // Add creates a new Elasticsearch Controller and adds it to the Manager with default RBAC. The Manager will set fields
 // on the Controller and Start it when the Manager is Started.
@@ -153,23 +155,23 @@ type ReconcileElasticsearch struct {
 // Reconcile reads the state of the cluster for an Elasticsearch object and makes changes based on the state read and
 // what is in the Elasticsearch.Spec
 func (r *ReconcileElasticsearch) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	ctx := common.NewReconciliationContext(crlog.Log.WithName(name), request.NamespacedName, "elasticsearch")
+	ctx := common.NewReconciliationContext(request, &r.iteration, logger)
 	return tracing.TraceReconciliation(ctx, request, "elasticsearch", r.doReconcile)
 }
 
 func (r *ReconcileElasticsearch) doReconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	logger := tracing.LoggerFromContext(ctx)
-	defer common.LogReconciliationRun(logger, request, &r.iteration)()
+	rlog := log.FromContext(ctx, logger)
+	defer common.LogReconciliationRun(rlog, request)()
 
 	// Fetch the Elasticsearch instance
 	var es esv1.Elasticsearch
 	requeue, err := r.fetchElasticsearch(ctx, request, &es)
 	if err != nil || requeue {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if common.IsUnmanaged(&es) {
-		logger.Info("Object is currently not managed by this controller. Skipping reconciliation")
+		rlog.Info("Object is currently not managed by this controller. Skipping reconciliation")
 		return reconcile.Result{}, nil
 	}
 
@@ -177,7 +179,7 @@ func (r *ReconcileElasticsearch) doReconcile(ctx context.Context, request reconc
 	compat, err := annotation.ReconcileCompatibility(ctx, r.Client, &es, selector, r.OperatorInfo.BuildInfo.Version)
 	if err != nil {
 		k8s.EmitErrorEvent(r.recorder, err, &es, events.EventCompatCheckError, "Error during compatibility check: %v", err)
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if !compat {
@@ -187,12 +189,12 @@ func (r *ReconcileElasticsearch) doReconcile(ctx context.Context, request reconc
 
 	// Remove any previous Finalizers
 	if err := finalizer.RemoveAll(r.Client, &es); err != nil {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	err = annotation.UpdateControllerVersion(ctx, r.Client, &es, r.OperatorInfo.BuildInfo.Version)
 	if err != nil {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	state := esreconcile.NewState(es)
@@ -200,11 +202,12 @@ func (r *ReconcileElasticsearch) doReconcile(ctx context.Context, request reconc
 	err = r.updateStatus(ctx, es, state)
 	if err != nil {
 		if apierrors.IsConflict(err) {
-			logger.V(1).Info("Conflict while updating status")
+			rlog.V(1).Info("Conflict while updating status")
 			return reconcile.Result{Requeue: true}, nil
 		}
 		k8s.EmitErrorEvent(r.recorder, err, &es, events.EventReconciliationError, "Reconciliation error: %v", err)
 	}
+
 	return results.WithError(err).Aggregate()
 }
 
@@ -246,7 +249,7 @@ func (r *ReconcileElasticsearch) internalReconcile(
 		// this is the same validation as the webhook, but we run it again here in case the webhook has not been configured
 		err := es.ValidateCreate()
 		if err != nil {
-			tracing.LoggerFromContext(ctx).Error(err, "Elasticsearch manifest validation failed")
+			log.FromContext(ctx, logger).Error(err, "Elasticsearch manifest validation failed")
 			reconcileState.UpdateElasticsearchInvalid(err)
 		}
 
@@ -257,7 +260,7 @@ func (r *ReconcileElasticsearch) internalReconcile(
 
 	err := es.CheckForWarnings()
 	if err != nil {
-		tracing.LoggerFromContext(ctx).Info("Elasticsearch manifest has warnings. Proceed at your own risk. " + err.Error())
+		log.FromContext(ctx, logger).Info("Elasticsearch manifest has warnings. Proceed at your own risk. " + err.Error())
 		reconcileState.AddEvent(corev1.EventTypeWarning, events.EventReasonValidation, err.Error())
 	}
 
@@ -290,24 +293,23 @@ func (r *ReconcileElasticsearch) updateStatus(
 	es esv1.Elasticsearch,
 	reconcileState *esreconcile.State,
 ) error {
-	span, _ := apm.StartSpan(ctx, "update_status", tracing.SpanTypeApp)
-	defer span.End()
+	return tracing.DoInSpan(ctx, "update_status", func(ctx context.Context) error {
+		rlog := log.FromContext(ctx, logger)
 
-	logger := tracing.LoggerFromContext(ctx)
+		events, cluster := reconcileState.Apply()
+		for _, evt := range events {
+			rlog.V(1).Info("Recording event", "event", evt)
+			r.recorder.Event(&es, evt.EventType, evt.Reason, evt.Message)
+		}
 
-	events, cluster := reconcileState.Apply()
-	for _, evt := range events {
-		logger.V(1).Info("Recording event", "event", evt)
-		r.recorder.Event(&es, evt.EventType, evt.Reason, evt.Message)
-	}
-	if cluster == nil {
-		return nil
-	}
-	logger.V(1).Info("Updating status",
-		"iteration", atomic.LoadUint64(&r.iteration),
-		"status", cluster.Status,
-	)
-	return common.UpdateStatus(r.Client, cluster)
+		if cluster == nil {
+			return nil
+		}
+
+		rlog.V(1).Info("Updating status", "iteration", atomic.LoadUint64(&r.iteration), "status", cluster.Status)
+
+		return common.UpdateStatus(r.Client, cluster)
+	})
 }
 
 // onDelete garbage collect resources when a Elasticsearch cluster is deleted

@@ -14,15 +14,11 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/utils/compare"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/maps"
+
 	"go.elastic.co/apm"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	corev1 "k8s.io/api/core/v1"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-var log = logf.Log.WithName("common")
 
 func ReconcileService(
 	ctx context.Context,
@@ -30,7 +26,7 @@ func ReconcileService(
 	expected *corev1.Service,
 	owner metav1.Object,
 ) (*corev1.Service, error) {
-	span, _ := apm.StartSpan(ctx, "reconcile_service", tracing.SpanTypeApp)
+	span, ctx := apm.StartSpan(ctx, "reconcile_service", tracing.SpanTypeApp)
 	defer span.End()
 
 	reconciled := &corev1.Service{}
@@ -51,7 +47,7 @@ func ReconcileService(
 			reconciled.Spec = expected.Spec
 		},
 	})
-	return reconciled, err
+	return reconciled, tracing.CaptureError(ctx, err)
 }
 
 func needsRecreate(expected, reconciled *corev1.Service) bool {

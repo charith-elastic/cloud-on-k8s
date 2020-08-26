@@ -6,7 +6,6 @@ package association
 
 import (
 	"context"
-	"fmt"
 	"reflect"
 	"time"
 
@@ -93,18 +92,25 @@ type Reconciler struct {
 	logger logr.Logger
 }
 
-// log with namespace and name fields set for the given association resource.
-func (r *Reconciler) log(associated commonv1.Associated) logr.Logger {
-	return r.logger.WithValues(
-		"namespace", associated.GetNamespace(),
-		fmt.Sprintf("%s_name", r.AssociatedShortName), associated.GetName(),
+func (r *Reconciler) log(ctx context.Context, associated commonv1.Associated) logr.Logger {
+	return tracing.LoggerFromContext(ctx).WithValues(
+		"labels",
+		map[string]string{
+			"associated_namespace": associated.GetNamespace(),
+			"associated_name":      associated.GetName(),
+		},
 	)
 }
 
 func (r *Reconciler) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	defer common.LogReconciliationRun(r.logger, request, fmt.Sprintf("%s_name", r.AssociatedShortName), &r.iteration)()
-	tx, ctx := tracing.NewTransaction(tracing.Tracer(), request.NamespacedName, r.AssociationName)
-	defer tracing.EndTransaction(tx)
+	logger := r.logger.WithValues("labels", map[string]string{"association_name": r.AssociationName})
+	ctx := common.NewReconciliationContext(logger, request.NamespacedName, r.AssociationName)
+	return tracing.TraceReconciliation(ctx, request, r.AssociationName, r.doReconcile)
+}
+
+func (r *Reconciler) doReconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	logger := tracing.LoggerFromContext(ctx)
+	defer common.LogReconciliationRun(logger, request, &r.iteration)()
 
 	association := r.AssociationObjTemplate()
 	if err := FetchWithAssociations(ctx, r.Client, request, association.Associated()); err != nil {
@@ -115,11 +121,11 @@ func (r *Reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 				Name:      request.Name,
 			})
 		}
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if common.IsUnmanaged(association) {
-		r.log(association).Info("Object is currently not managed by this controller. Skipping reconciliation")
+		r.log(ctx, association).Info("Object is currently not managed by this controller. Skipping reconciliation")
 		return reconcile.Result{}, nil
 	}
 
@@ -129,15 +135,15 @@ func (r *Reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 	}
 
 	if compatible, err := r.isCompatible(ctx, association.Associated()); err != nil || !compatible {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if err := annotation.UpdateControllerVersion(ctx, r.Client, association, r.OperatorInfo.BuildInfo.Version); err != nil {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	results := reconciler.NewResult(ctx)
-	newStatus, err := r.doReconcile(ctx, association)
+	newStatus, err := r.internalReconcile(ctx, association)
 	if err != nil {
 		results.WithError(err)
 	}
@@ -152,7 +158,7 @@ func (r *Reconciler) Reconcile(request reconcile.Request) (reconcile.Result, err
 		Aggregate()
 }
 
-func (r *Reconciler) doReconcile(ctx context.Context, association commonv1.Association) (commonv1.AssociationStatus, error) {
+func (r *Reconciler) internalReconcile(ctx context.Context, association commonv1.Association) (commonv1.AssociationStatus, error) {
 	assocKey := k8s.ExtractNamespacedName(association)
 	assocLabels := r.AssociationLabels(assocKey)
 
@@ -164,7 +170,7 @@ func (r *Reconciler) doReconcile(ctx context.Context, association commonv1.Assoc
 
 	// garbage collect leftover resources that are not required anymore
 	if err := deleteOrphanedResources(ctx, r, esRef, association, assocLabels); err != nil {
-		r.log(association).Error(err, "Error while trying to delete orphaned resources. Continuing.")
+		r.log(ctx, association).Error(err, "Error while trying to delete orphaned resources. Continuing.")
 	}
 
 	associationRef := association.AssociationRef()
@@ -280,7 +286,7 @@ func (r *Reconciler) getElasticsearch(
 	association commonv1.Association,
 	elasticsearchRef commonv1.ObjectSelector,
 ) (esv1.Elasticsearch, commonv1.AssociationStatus, error) {
-	span, _ := apm.StartSpan(ctx, "get_elasticsearch", tracing.SpanTypeApp)
+	span, ctx := apm.StartSpan(ctx, "get_elasticsearch", tracing.SpanTypeApp)
 	defer span.End()
 
 	var es esv1.Elasticsearch
@@ -291,12 +297,12 @@ func (r *Reconciler) getElasticsearch(
 		if apierrors.IsNotFound(err) {
 			// ES is not found, remove any existing backend configuration and retry in a bit.
 			if err := RemoveAssociationConf(r.Client, association.Associated(), association.AssociationConfAnnotationName()); err != nil && !apierrors.IsConflict(err) {
-				r.log(association).Error(err, "Failed to remove Elasticsearch association configuration")
-				return esv1.Elasticsearch{}, commonv1.AssociationPending, err
+				r.log(ctx, association).Error(err, "Failed to remove Elasticsearch association configuration")
+				return esv1.Elasticsearch{}, commonv1.AssociationPending, tracing.CaptureError(ctx, err)
 			}
 			return esv1.Elasticsearch{}, commonv1.AssociationPending, nil
 		}
-		return esv1.Elasticsearch{}, commonv1.AssociationFailed, err
+		return esv1.Elasticsearch{}, commonv1.AssociationFailed, tracing.CaptureError(ctx, err)
 	}
 	return es, "", nil
 }
@@ -317,17 +323,17 @@ func (r *Reconciler) updateAssocConf(
 	expectedAssocConf *commonv1.AssociationConf,
 	association commonv1.Association,
 ) (commonv1.AssociationStatus, error) {
-	span, _ := apm.StartSpan(ctx, "update_assoc_conf", tracing.SpanTypeApp)
+	span, ctx := apm.StartSpan(ctx, "update_assoc_conf", tracing.SpanTypeApp)
 	defer span.End()
 
 	if !reflect.DeepEqual(expectedAssocConf, association.AssociationConf()) {
-		r.log(association).Info("Updating association configuration")
+		r.log(ctx, association).Info("Updating association configuration")
 		if err := UpdateAssociationConf(r.Client, association.Associated(), expectedAssocConf, association.AssociationConfAnnotationName()); err != nil {
 			if apierrors.IsConflict(err) {
 				return commonv1.AssociationPending, nil
 			}
-			r.log(association).Error(err, "Failed to update association configuration")
-			return commonv1.AssociationPending, err
+			r.log(ctx, association).Error(err, "Failed to update association configuration")
+			return commonv1.AssociationPending, tracing.CaptureError(ctx, err)
 		}
 		association.SetAssociationConf(expectedAssocConf)
 	}
@@ -336,23 +342,22 @@ func (r *Reconciler) updateAssocConf(
 
 // updateStatus updates the associated resource status.
 func (r *Reconciler) updateStatus(ctx context.Context, association commonv1.Association, newStatus commonv1.AssociationStatus) error {
-	span, _ := apm.StartSpan(ctx, "update_association_status", tracing.SpanTypeApp)
-	defer span.End()
-
-	oldStatus := association.AssociationStatus()
-	if !reflect.DeepEqual(oldStatus, newStatus) {
-		association.SetAssociationStatus(newStatus)
-		if err := r.Status().Update(association.Associated()); err != nil {
-			return err
+	return tracing.DoInSpan(ctx, "update_association_status", func(ctx context.Context) error {
+		oldStatus := association.AssociationStatus()
+		if !reflect.DeepEqual(oldStatus, newStatus) {
+			association.SetAssociationStatus(newStatus)
+			if err := r.Status().Update(association.Associated()); err != nil {
+				return err
+			}
+			r.recorder.AnnotatedEventf(
+				association.Associated(),
+				annotation.ForAssociationStatusChange(oldStatus, newStatus),
+				corev1.EventTypeNormal,
+				events.EventAssociationStatusChange,
+				"Association status changed from [%s] to [%s]", oldStatus, newStatus)
 		}
-		r.recorder.AnnotatedEventf(
-			association.Associated(),
-			annotation.ForAssociationStatusChange(oldStatus, newStatus),
-			corev1.EventTypeNormal,
-			events.EventAssociationStatusChange,
-			"Association status changed from [%s] to [%s]", oldStatus, newStatus)
-	}
-	return nil
+		return nil
+	})
 }
 
 func resultFromStatus(status commonv1.AssociationStatus) reconcile.Result {

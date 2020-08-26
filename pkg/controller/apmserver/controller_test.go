@@ -25,7 +25,7 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 )
 
-func TestReconcileApmServer_doReconcile(t *testing.T) {
+func TestReconcileApmServer_internalReconcile(t *testing.T) {
 	type fields struct {
 		resources      []runtime.Object
 		recorder       record.EventRecorder
@@ -101,9 +101,9 @@ func TestReconcileApmServer_doReconcile(t *testing.T) {
 				dynamicWatches: tt.fields.dynamicWatches,
 				Parameters:     tt.fields.Parameters,
 			}
-			got, err := r.doReconcile(context.Background(), tt.args.request, tt.as.DeepCopy())
+			got, err := r.internalReconcile(context.Background(), tt.args.request, tt.as.DeepCopy())
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ReconcileApmServer.doReconcile() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ReconcileApmServer.internalReconcile() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			require.NotNil(t, got)

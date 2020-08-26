@@ -6,14 +6,18 @@ package common
 
 import (
 	"context"
+	"sync/atomic"
 
+	"github.com/elastic/cloud-on-k8s/pkg/utils/log"
 	"github.com/go-logr/logr"
-	"k8s.io/apimachinery/pkg/types"
-	crlog "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// NewReconciliationContext creates a new context for a reconciliation function.
-func NewReconciliationContext(logger logr.Logger, name types.NamespacedName, kind string) context.Context {
-	newLogger := logger.WithValues("labels", map[string]string{"kind": kind, "resource": name.Name, "namespace": name.Namespace})
-	return crlog.IntoContext(context.Background(), newLogger)
+// NewReconciliationContext creates the context for a reconciliation run.
+// It increments the iteration number and embeds a logger into the returned context.
+func NewReconciliationContext(request reconcile.Request, iteration *uint64, logger logr.Logger) context.Context {
+	currIteration := atomic.AddUint64(iteration, 1)
+	rlog := ReconciliationLogger(logger, request, currIteration)
+
+	return log.IntoContext(context.Background(), rlog)
 }

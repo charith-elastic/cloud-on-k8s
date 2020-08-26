@@ -8,6 +8,7 @@ import (
 	"context"
 
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/tracing"
 	esclient "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 )
@@ -19,6 +20,8 @@ func Reconcile(
 	esCluster esv1.Elasticsearch,
 	clusterClient esclient.Client,
 ) error {
-	clusterName := k8s.ExtractNamespacedName(&esCluster)
-	return applyLinkedLicense(ctx, c, clusterName, clusterClient)
+	return tracing.DoInSpan(ctx, "reconcile_license", func(ctx context.Context) error {
+		clusterName := k8s.ExtractNamespacedName(&esCluster)
+		return applyLinkedLicense(ctx, c, clusterName, clusterClient)
+	})
 }

@@ -5,22 +5,29 @@
 package common
 
 import (
-	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+// ReconciliationLogger returns a logger with labels set to the reconciliation request details.
+func ReconciliationLogger(parent logr.Logger, request reconcile.Request, iteration uint64) logr.Logger {
+	return parent.WithValues("labels", map[string]interface{}{
+		"reconcile.name":      request.Name,
+		"reconcile.namespace": request.Namespace,
+		"reconcile.iteration": iteration,
+	})
+}
+
 // LogReconciliationRun is the common logging function used to record a reconciliation run.
-func LogReconciliationRun(log logr.Logger, request reconcile.Request, iteration *uint64) func() {
-	currentIteration := atomic.AddUint64(iteration, 1)
+func LogReconciliationRun(log logr.Logger, request reconcile.Request) func() {
 	startTime := time.Now()
 
-	log.Info("Starting reconciliation run", "iteration", currentIteration)
+	log.Info("Starting reconciliation run")
 
 	return func() {
 		totalTime := time.Since(startTime)
-		log.Info("Ending reconciliation run", "iteration", currentIteration, "took", totalTime)
+		log.Info("Ending reconciliation run", "took", totalTime)
 	}
 }

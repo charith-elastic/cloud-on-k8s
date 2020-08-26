@@ -10,8 +10,6 @@ import (
 	"reflect"
 	"sync/atomic"
 
-	"go.elastic.co/apm"
-
 	apmv1 "github.com/elastic/cloud-on-k8s/pkg/apis/apm/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/association"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
@@ -38,7 +36,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -53,8 +51,6 @@ const (
 )
 
 var (
-	log = logf.Log.WithName(controllerName)
-
 	// ApmServerBin is the apm server binary file
 	ApmServerBin = filepath.Join(ApmBaseDir, "apm-server")
 
@@ -172,9 +168,13 @@ var _ driver.Interface = &ReconcileApmServer{}
 // Reconcile reads that state of the cluster for a ApmServer object and makes changes based on the state read
 // and what is in the ApmServer.Spec
 func (r *ReconcileApmServer) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	defer common.LogReconciliationRun(log, request, "as_name", &r.iteration)()
-	tx, ctx := tracing.NewTransaction(tracing.Tracer(), request.NamespacedName, "apmserver")
-	defer tracing.EndTransaction(tx)
+	ctx := common.NewReconciliationContext(crlog.Log.WithName(controllerName), request.NamespacedName, "apmserver")
+	return tracing.TraceReconciliation(ctx, request, "apmserver", r.doReconcile)
+}
+
+func (r *ReconcileApmServer) doReconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	logger := tracing.LoggerFromContext(ctx)
+	defer common.LogReconciliationRun(logger, request, &r.iteration)()
 
 	var as apmv1.ApmServer
 	if err := association.FetchWithAssociations(ctx, r.Client, request, &as); err != nil {
@@ -185,16 +185,16 @@ func (r *ReconcileApmServer) Reconcile(request reconcile.Request) (reconcile.Res
 			})
 			return reconcile.Result{}, nil
 		}
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if common.IsUnmanaged(&as) {
-		log.Info("Object currently not managed by this controller. Skipping reconciliation", "namespace", as.Namespace, "as_name", as.Name)
+		logger.Info("Object currently not managed by this controller. Skipping reconciliation")
 		return reconcile.Result{}, nil
 	}
 
 	if compatible, err := r.isCompatible(ctx, &as); err != nil || !compatible {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	// Remove any previous finalizer used in ECK v1.0.0-beta1 that we don't need anymore
@@ -209,14 +209,14 @@ func (r *ReconcileApmServer) Reconcile(request reconcile.Request) (reconcile.Res
 	}
 
 	if err := annotation.UpdateControllerVersion(ctx, r.Client, &as, r.OperatorInfo.BuildInfo.Version); err != nil {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if !association.AreConfiguredIfSet(as.GetAssociations(), r.recorder) {
 		return reconcile.Result{}, nil
 	}
 
-	return r.doReconcile(ctx, request, &as)
+	return r.internalReconcile(ctx, request, &as)
 }
 
 func (r *ReconcileApmServer) isCompatible(ctx context.Context, as *apmv1.ApmServer) (bool, error) {
@@ -228,9 +228,17 @@ func (r *ReconcileApmServer) isCompatible(ctx context.Context, as *apmv1.ApmServ
 	return compat, err
 }
 
-func (r *ReconcileApmServer) doReconcile(ctx context.Context, request reconcile.Request, as *apmv1.ApmServer) (reconcile.Result, error) {
+func (r *ReconcileApmServer) internalReconcile(ctx context.Context, request reconcile.Request, as *apmv1.ApmServer) (reconcile.Result, error) {
 	// Run validation in case the webhook is disabled
-	if err := r.validate(ctx, as); err != nil {
+	if err := tracing.DoInSpan(ctx, "validate", func(ctx context.Context) error {
+		if err := as.ValidateCreate(); err != nil {
+			tracing.LoggerFromContext(ctx).Error(err, "Validation failed")
+			k8s.EmitErrorEvent(r.recorder, err, as, events.EventReasonValidation, err.Error())
+			return err
+		}
+
+		return nil
+	}); err != nil {
 		return reconcile.Result{}, err
 	}
 
@@ -262,7 +270,7 @@ func (r *ReconcileApmServer) doReconcile(ctx context.Context, request reconcile.
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	logger := log.WithValues("namespace", as.Namespace, "as_name", as.Name)
+	logger := tracing.LoggerFromContext(ctx)
 	if !association.AllowVersion(*asVersion, as, logger, r.recorder) {
 		return reconcile.Result{}, nil // will eventually retry
 	}
@@ -270,7 +278,7 @@ func (r *ReconcileApmServer) doReconcile(ctx context.Context, request reconcile.
 	state, err = r.reconcileApmServerDeployment(ctx, state, as)
 	if err != nil {
 		if apierrors.IsConflict(err) {
-			log.V(1).Info("Conflict while updating status")
+			logger.V(1).Info("Conflict while updating status")
 			return reconcile.Result{Requeue: true}, nil
 		}
 		k8s.EmitErrorEvent(r.recorder, err, as, events.EventReconciliationError, "Deployment reconciliation error: %v", err)
@@ -282,25 +290,12 @@ func (r *ReconcileApmServer) doReconcile(ctx context.Context, request reconcile.
 	// update status
 	err = r.updateStatus(ctx, state)
 	if err != nil && apierrors.IsConflict(err) {
-		log.V(1).Info("Conflict while updating status", "namespace", as.Namespace, "as", as.Name)
+		logger.V(1).Info("Conflict while updating status")
 		return reconcile.Result{Requeue: true}, nil
 	}
 	res, err := results.WithError(err).Aggregate()
 	k8s.EmitErrorEvent(r.recorder, err, as, events.EventReconciliationError, "Reconciliation error: %v", err)
 	return res, err
-}
-
-func (r *ReconcileApmServer) validate(ctx context.Context, as *apmv1.ApmServer) error {
-	span, vctx := apm.StartSpan(ctx, "validate", tracing.SpanTypeApp)
-	defer span.End()
-
-	if err := as.ValidateCreate(); err != nil {
-		log.Error(err, "Validation failed")
-		k8s.EmitErrorEvent(r.recorder, err, as, events.EventReasonValidation, err.Error())
-		return tracing.CaptureError(vctx, err)
-	}
-
-	return nil
 }
 
 func (r *ReconcileApmServer) onDelete(obj types.NamespacedName) {
@@ -337,23 +332,20 @@ func reconcileApmServerToken(c k8s.Client, as *apmv1.ApmServer) (corev1.Secret, 
 }
 
 func (r *ReconcileApmServer) updateStatus(ctx context.Context, state State) error {
-	span, _ := apm.StartSpan(ctx, "update_status", tracing.SpanTypeApp)
-	defer span.End()
+	return tracing.DoInSpan(ctx, "update_status", func(ctx context.Context) error {
+		current := state.originalApmServer
+		if reflect.DeepEqual(current.Status, state.ApmServer.Status) {
+			return nil
+		}
 
-	current := state.originalApmServer
-	if reflect.DeepEqual(current.Status, state.ApmServer.Status) {
-		return nil
-	}
-	if state.ApmServer.Status.IsDegraded(current.Status.DeploymentStatus) {
-		r.recorder.Event(current, corev1.EventTypeWarning, events.EventReasonUnhealthy, "Apm Server health degraded")
-	}
-	log.V(1).Info("Updating status",
-		"iteration", atomic.LoadUint64(&r.iteration),
-		"namespace", state.ApmServer.Namespace,
-		"as_name", state.ApmServer.Name,
-		"status", state.ApmServer.Status,
-	)
-	return common.UpdateStatus(r.Client, state.ApmServer)
+		if state.ApmServer.Status.IsDegraded(current.Status.DeploymentStatus) {
+			r.recorder.Event(current, corev1.EventTypeWarning, events.EventReasonUnhealthy, "Apm Server health degraded")
+		}
+
+		tracing.LoggerFromContext(ctx).V(1).Info("Updating status", "iteration", atomic.LoadUint64(&r.iteration), "status", state.ApmServer.Status)
+
+		return common.UpdateStatus(r.Client, state.ApmServer)
+	})
 }
 
 func NewService(as apmv1.ApmServer) *corev1.Service {

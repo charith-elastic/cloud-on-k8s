@@ -5,9 +5,11 @@
 package license
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/tracing"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
 	eslabel "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
 
@@ -18,7 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -43,17 +45,21 @@ const (
 	minimumRetryInterval = 1 * time.Hour
 )
 
-var log = logf.Log.WithName(name)
-
 // Reconcile reads the cluster license for the cluster being reconciled. If found, it checks whether it is still valid.
 // If there is none it assigns a new one.
 // In any case it schedules a new reconcile request to be processed when the license is about to expire.
 // This happens independently from any watch triggered reconcile request.
 func (r *ReconcileLicenses) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	defer common.LogReconciliationRun(log, request, "es_name", &r.iteration)()
+	ctx := common.NewReconciliationContext(crlog.Log.WithName(name), request.NamespacedName, "license")
+	return tracing.TraceReconciliation(ctx, request, "license", r.doReconcile)
+}
+
+func (r *ReconcileLicenses) doReconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	logger := tracing.LoggerFromContext(ctx)
+	defer common.LogReconciliationRun(logger, request, &r.iteration)()
 	results := r.reconcileInternal(request)
 	current, err := results.Aggregate()
-	log.V(1).Info("Reconcile result", "requeue", current.Requeue, "requeueAfter", current.RequeueAfter)
+	logger.V(1).Info("Reconcile result", "requeue", current.Requeue, "requeueAfter", current.RequeueAfter)
 	return current, err
 }
 

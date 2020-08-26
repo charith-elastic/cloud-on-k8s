@@ -20,6 +20,7 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/daemonset"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/deployment"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/reconciler"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/tracing"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/pointer"
 )
@@ -71,7 +72,7 @@ func reconcilePodVehicle(podTemplate corev1.PodTemplateSpec, params DriverParams
 
 	err = updateStatus(params, ready, desired)
 	if err != nil && apierrors.IsConflict(err) {
-		params.Logger.V(1).Info(
+		tracing.LoggerFromContext(params.Context).V(1).Info(
 			"Conflict while updating status",
 			"namespace", params.Beat.Namespace,
 			"beat_name", params.Beat.Name)

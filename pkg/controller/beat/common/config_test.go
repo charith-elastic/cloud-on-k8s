@@ -8,12 +8,10 @@ import (
 	"context"
 	"testing"
 
-	logrtesting "github.com/go-logr/logr/testing"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	beatv1beta1 "github.com/elastic/cloud-on-k8s/pkg/apis/beat/v1beta1"
 	commonv1 "github.com/elastic/cloud-on-k8s/pkg/apis/common/v1"
@@ -52,7 +50,7 @@ func Test_buildBeatConfig(t *testing.T) {
 	managedCfg := settings.MustParseConfig([]byte("setup.kibana: true"))
 	userCfg := &commonv1.Config{Data: map[string]interface{}{"user": "true"}}
 	userCanonicalCfg := settings.MustCanonicalConfig(userCfg.Data)
-	outputCAYaml := settings.MustParseConfig([]byte(`output.elasticsearch.ssl.certificate_authorities: 
+	outputCAYaml := settings.MustParseConfig([]byte(`output.elasticsearch.ssl.certificate_authorities:
    - /mnt/elastic-internal/elasticsearch-certs/ca.crt`))
 	outputYaml := settings.MustParseConfig([]byte(`output:
   elasticsearch:
@@ -176,7 +174,6 @@ func Test_buildBeatConfig(t *testing.T) {
 			gotYaml, gotErr := buildBeatConfig(DriverParams{
 				Client:        tt.client,
 				Context:       nil,
-				Logger:        logrtesting.NullLogger{},
 				Watches:       watches.NewDynamicWatches(),
 				EventRecorder: nil,
 				Beat:          tt.beat,
@@ -191,7 +188,6 @@ func Test_buildBeatConfig(t *testing.T) {
 }
 
 func TestBuildKibanaConfig(t *testing.T) {
-
 	secretFixture := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "auth-secret",
@@ -220,20 +216,22 @@ func TestBuildKibanaConfig(t *testing.T) {
 				KibanaRef: commonv1.ObjectSelector{
 					Name:      "auth-secret",
 					Namespace: "test-ns",
-				}}}}
+				},
+			},
+		}}
 
 		assoc.SetAssociationConf(&conf)
 		return assoc
 	}
 
 	expectedConfig := settings.MustParseConfig([]byte(`setup.dashboards.enabled: true
-setup.kibana: 
+setup.kibana:
   host: url
   username: elastic
   password: "123"
 `))
 
-	expectedCAConfig := settings.MustParseConfig([]byte(`setup.kibana.ssl.certificate_authorities: 
+	expectedCAConfig := settings.MustParseConfig([]byte(`setup.kibana.ssl.certificate_authorities:
   - "/mnt/elastic-internal/kibana-certs/ca.crt"
 `))
 
@@ -371,7 +369,6 @@ func Test_getUserConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			params := DriverParams{
 				Context:       context.Background(),
-				Logger:        log.NullLogger{},
 				Client:        tt.client,
 				EventRecorder: &record.FakeRecorder{},
 				Watches:       watches.NewDynamicWatches(),

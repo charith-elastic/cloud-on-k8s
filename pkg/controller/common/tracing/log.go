@@ -11,7 +11,17 @@ import (
 	"github.com/go-logr/logr"
 	pkgerrors "github.com/pkg/errors"
 	"go.elastic.co/apm"
-	crlog "sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+const (
+	SpanIDField        = "span.id"
+	TraceIDField       = "trace.id"
+	TransactionIDField = "transaction.id"
+)
+
+var (
+	_ apm.Logger        = &logAdapter{}
+	_ apm.WarningLogger = &logAdapter{}
 )
 
 // NewLogAdapter returns an implementation of the log interface expected by the APM agent.
@@ -37,18 +47,6 @@ func (l *logAdapter) Debugf(format string, args ...interface{}) {
 	l.log.V(1).Info(fmt.Sprintf(format, args...))
 }
 
-var (
-	_ apm.Logger        = &logAdapter{}
-	_ apm.WarningLogger = &logAdapter{}
-)
-
-// LoggerFromContext returns a logger from the context with tracing information added.
-func LoggerFromContext(ctx context.Context) logr.Logger {
-	fields := TraceContextKV(ctx)
-
-	return crlog.FromContext(ctx).WithValues(fields...)
-}
-
 // TraceContextKV returns logger key-values for the current trace context.
 func TraceContextKV(ctx context.Context) []interface{} {
 	tx := apm.TransactionFromContext(ctx)
@@ -57,10 +55,10 @@ func TraceContextKV(ctx context.Context) []interface{} {
 	}
 
 	traceCtx := tx.TraceContext()
-	fields := []interface{}{"trace.id", traceCtx.Trace, "transaction.id", traceCtx.Span}
+	fields := []interface{}{TraceIDField, traceCtx.Trace, TransactionIDField, traceCtx.Span}
 
 	if span := apm.SpanFromContext(ctx); span != nil {
-		fields = append(fields, "span.id", span.TraceContext().Span)
+		fields = append(fields, SpanIDField, span.TraceContext().Span)
 	}
 
 	return fields

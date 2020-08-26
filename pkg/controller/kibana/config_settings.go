@@ -72,7 +72,7 @@ func NewConfigSettings(ctx context.Context, client k8s.Client, kb kbv1.Kibana, v
 	span, _ := apm.StartSpan(ctx, "new_config_settings", tracing.SpanTypeApp)
 	defer span.End()
 
-	reusableSettings, err := getOrCreateReusableSettings(client, kb)
+	reusableSettings, err := getOrCreateReusableSettings(ctx, client, kb)
 	if err != nil {
 		return CanonicalConfig{}, err
 	}
@@ -166,34 +166,40 @@ type reusableSettings struct {
 }
 
 // getExistingConfig retrieves the canonical config for a given Kibana, if one exists
-func getExistingConfig(client k8s.Client, kb kbv1.Kibana) (*settings.CanonicalConfig, error) {
+func getExistingConfig(ctx context.Context, client k8s.Client, kb kbv1.Kibana) (*settings.CanonicalConfig, error) {
+	span, ctx := apm.StartSpan(ctx, "get_existing_config", tracing.SpanTypeApp)
+	defer span.End()
+
 	var secret corev1.Secret
 	err := client.Get(types.NamespacedName{Name: SecretName(kb), Namespace: kb.Namespace}, &secret)
 	if err != nil && apierrors.IsNotFound(err) {
-		log.V(1).Info("Kibana config secret does not exist", "namespace", kb.Namespace, "kibana_name", kb.Name)
+		tracing.LoggerFromContext(ctx).V(1).Info("Kibana config secret does not exist")
 		return nil, nil
 	} else if err != nil {
-		log.Error(err, "Error retrieving kibana config secret", "namespace", kb.Namespace, "kibana_name", kb.Name)
-		return nil, err
+		tracing.LoggerFromContext(ctx).Error(err, "Error retrieving kibana config secret")
+		return nil, tracing.CaptureError(ctx, err)
 	}
 	rawCfg, exists := secret.Data[SettingsFilename]
 	if !exists {
 		err = errors.New("Kibana config secret exists but missing config file key")
-		log.Error(err, "", "namespace", secret.Namespace, "secret_name", secret.Name, "key", SettingsFilename)
-		return nil, err
+		tracing.LoggerFromContext(ctx).Error(err, "Missing config file key", "namespace", secret.Namespace, "secret_name", secret.Name, "key", SettingsFilename)
+		return nil, tracing.CaptureError(ctx, err)
 	}
 	cfg, err := settings.ParseConfig(rawCfg)
 	if err != nil {
-		log.Error(err, "Error parsing existing kibana config in secret", "namespace", secret.Namespace, "secret_name", secret.Name, "key", SettingsFilename)
-		return nil, err
+		tracing.LoggerFromContext(ctx).Error(err, "Error parsing existing kibana config in secret", "namespace", secret.Namespace, "secret_name", secret.Name, "key", SettingsFilename)
+		return nil, tracing.CaptureError(ctx, err)
 	}
 	return cfg, nil
 }
 
 // getOrCreateReusableSettings filters an existing config for only items we want to preserve between spec changes
 // because they cannot be generated deterministically, e.g. encryption keys
-func getOrCreateReusableSettings(c k8s.Client, kb kbv1.Kibana) (*settings.CanonicalConfig, error) {
-	cfg, err := getExistingConfig(c, kb)
+func getOrCreateReusableSettings(ctx context.Context, c k8s.Client, kb kbv1.Kibana) (*settings.CanonicalConfig, error) {
+	span, ctx := apm.StartSpan(ctx, "get_or_create_reusable_settings", tracing.SpanTypeApp)
+	defer span.End()
+
+	cfg, err := getExistingConfig(ctx, c, kb)
 	if err != nil {
 		return nil, err
 	}

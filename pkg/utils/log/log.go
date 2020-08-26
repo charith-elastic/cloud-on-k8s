@@ -5,12 +5,15 @@
 package log
 
 import (
+	"context"
 	"flag"
 	"os"
 	"strconv"
 
 	"github.com/elastic/cloud-on-k8s/pkg/about"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/tracing"
 	"github.com/elastic/cloud-on-k8s/pkg/dev"
+	"github.com/go-logr/logr"
 	"github.com/spf13/pflag"
 	"go.elastic.co/apm"
 	"go.elastic.co/apm/module/apmzap"
@@ -42,7 +45,7 @@ type logBuilder struct {
 // Option represents log configuration options.
 type Option func(*logBuilder)
 
-// WithVerbosity sets the log verbosity level.
+// WithVerbosity is the option to pass to InitLogger to set the log verbosity level.
 // Verbosity levels from 2 are custom levels that increase the verbosity as the value increases.
 // Standard levels are as follows:
 // level | Zap level | name
@@ -57,7 +60,7 @@ func WithVerbosity(verbosity int) Option {
 	}
 }
 
-// WithTracer sets the tracer used by the logger to send logs to APM.
+// WithTracer is the option to pass to InitLogger to set the tracer for the log backend.
 func WithTracer(tracer *apm.Tracer) Option {
 	return func(lb *logBuilder) {
 		lb.tracer = tracer
@@ -144,4 +147,39 @@ func determineLogLevel(v *int) zap.AtomicLevel {
 func getVersionString() string {
 	buildInfo := about.GetBuildInfo()
 	return buildInfo.VersionString()
+}
+
+// WithName returns a logger with the given name.
+func WithName(name string) logr.Logger {
+	return crlog.Log.WithName(name)
+}
+
+// WithContext returns a logger with tags set to information from the context.
+func WithContext(ctx context.Context, parent logr.Logger) logr.Logger {
+	keyValues := tracing.TraceContextKV(ctx)
+
+	return parent.WithValues(keyValues...)
+}
+
+type ctxKey struct{}
+
+var loggerCtxKey = ctxKey{}
+
+// FromContext returns the logger in the context if it exists or the default logger.
+// The returned logger will have context information added to its tags.
+func FromContext(ctx context.Context) logr.Logger {
+	var logger logr.Logger = crlog.Log
+
+	if ctx != nil {
+		if lv := ctx.Value(loggerCtxKey); lv != nil {
+			logger = lv.(logr.Logger)
+		}
+	}
+
+	return WithContext(ctx, logger)
+}
+
+// IntoContext inserts the given logger into the context.
+func IntoContext(ctx context.Context, logger logr.Logger) context.Context {
+	return context.WithValue(ctx, loggerCtxKey, logger)
 }

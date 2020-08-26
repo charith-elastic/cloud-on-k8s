@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/sha256"
 
-	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/keystore"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/reconciler"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/settings"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/tracing"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/watches"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
@@ -33,7 +33,6 @@ type Driver interface {
 
 type DriverParams struct {
 	Context context.Context
-	Logger  logr.Logger
 
 	Client        k8s.Client
 	EventRecorder record.EventRecorder
@@ -79,7 +78,7 @@ func Reconcile(
 	if err != nil {
 		return results.WithError(err)
 	}
-	if !association.AllowVersion(*beatVersion, &params.Beat, params.Logger, params.Recorder()) {
+	if !association.AllowVersion(*beatVersion, &params.Beat, tracing.LoggerFromContext(params.Context), params.Recorder()) {
 		return results // will eventually retry
 	}
 

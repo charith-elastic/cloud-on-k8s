@@ -14,7 +14,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/reconciler"
@@ -26,8 +25,6 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/maps"
 )
-
-var log = logf.Log.WithName("elasticsearch-user")
 
 // ReconcileUsersAndRoles fetches all users and roles and aggregates them into a single
 // Kubernetes secret mounted in the Elasticsearch Pods.
@@ -46,22 +43,22 @@ func ReconcileUsersAndRoles(
 	watched watches.DynamicWatches,
 	recorder record.EventRecorder,
 ) (esclient.BasicAuth, error) {
-	span, _ := apm.StartSpan(ctx, "reconcile_users", tracing.SpanTypeApp)
+	span, ctx := apm.StartSpan(ctx, "reconcile_users", tracing.SpanTypeApp)
 	defer span.End()
 
 	// build aggregate roles and file realms
 	roles, err := aggregateRoles(c, es, watched, recorder)
 	if err != nil {
-		return esclient.BasicAuth{}, err
+		return esclient.BasicAuth{}, tracing.CaptureError(ctx, err)
 	}
 	fileRealm, controllerUser, err := aggregateFileRealm(c, es, watched, recorder)
 	if err != nil {
-		return esclient.BasicAuth{}, err
+		return esclient.BasicAuth{}, tracing.CaptureError(ctx, err)
 	}
 
 	// reconcile the aggregate secret
 	if err := reconcileRolesFileRealmSecret(c, es, roles, fileRealm); err != nil {
-		return esclient.BasicAuth{}, err
+		return esclient.BasicAuth{}, tracing.CaptureError(ctx, err)
 	}
 
 	// return the controller user for next reconciliation steps to interact with Elasticsearch

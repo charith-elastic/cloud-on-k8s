@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"sync/atomic"
 
-	"go.elastic.co/apm"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,6 +18,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -139,9 +139,13 @@ var _ driver.Interface = &ReconcileEnterpriseSearch{}
 // Reconcile reads that state of the cluster for an EnterpriseSearch object and makes changes based on the state read
 // and what is in the EnterpriseSearch.Spec.
 func (r *ReconcileEnterpriseSearch) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	defer common.LogReconciliationRun(log, request, "ent_name", &r.iteration)()
-	tx, ctx := tracing.NewTransaction(tracing.Tracer(), request.NamespacedName, "enterprisesearch")
-	defer tracing.EndTransaction(tx)
+	ctx := common.NewReconciliationContext(crlog.Log.WithName(controllerName), request.NamespacedName, "enterprisesearch")
+	return tracing.TraceReconciliation(ctx, request, "enterprisesearch", r.doReconcile)
+}
+
+func (r *ReconcileEnterpriseSearch) doReconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	logger := tracing.LoggerFromContext(ctx)
+	defer common.LogReconciliationRun(logger, request, &r.iteration)()
 
 	var ent entv1beta1.EnterpriseSearch
 	if err := association.FetchWithAssociations(ctx, r.Client, request, &ent); err != nil {
@@ -152,27 +156,27 @@ func (r *ReconcileEnterpriseSearch) Reconcile(request reconcile.Request) (reconc
 			})
 			return reconcile.Result{}, nil
 		}
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if common.IsUnmanaged(&ent) {
-		log.Info("Object is currently not managed by this controller. Skipping reconciliation", "namespace", ent.Namespace, "ent_name", ent.Name)
+		logger.Info("Object is currently not managed by this controller. Skipping reconciliation")
 		return reconcile.Result{}, nil
 	}
 
 	if compatible, err := r.isCompatible(ctx, &ent); err != nil || !compatible {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if err := annotation.UpdateControllerVersion(ctx, r.Client, &ent, r.OperatorInfo.BuildInfo.Version); err != nil {
-		return reconcile.Result{}, tracing.CaptureError(ctx, fmt.Errorf("updating controller version: %w", err))
+		return reconcile.Result{}, fmt.Errorf("failed to update controller version: %w", err)
 	}
 
 	if !association.IsConfiguredIfSet(&ent, r.recorder) {
 		return reconcile.Result{}, nil
 	}
 
-	return r.doReconcile(ctx, ent)
+	return r.internalReconcile(ctx, ent)
 }
 
 func (r *ReconcileEnterpriseSearch) onDelete(obj types.NamespacedName) {
@@ -191,9 +195,17 @@ func (r *ReconcileEnterpriseSearch) isCompatible(ctx context.Context, ent *entv1
 	return compat, err
 }
 
-func (r *ReconcileEnterpriseSearch) doReconcile(ctx context.Context, ent entv1beta1.EnterpriseSearch) (reconcile.Result, error) {
+func (r *ReconcileEnterpriseSearch) internalReconcile(ctx context.Context, ent entv1beta1.EnterpriseSearch) (reconcile.Result, error) {
 	// Run validation in case the webhook is disabled
-	if err := r.validate(ctx, &ent); err != nil {
+	if err := tracing.DoInSpan(ctx, "validate", func(ctx context.Context) error {
+		if err := ent.ValidateCreate(); err != nil {
+			tracing.LoggerFromContext(ctx).Error(err, "Validation failed")
+			k8s.EmitErrorEvent(r.recorder, err, &ent, events.EventReasonValidation, err.Error())
+			return err
+		}
+
+		return nil
+	}); err != nil {
 		return reconcile.Result{}, err
 	}
 
@@ -224,7 +236,7 @@ func (r *ReconcileEnterpriseSearch) doReconcile(ctx context.Context, ent entv1be
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	logger := log.WithValues("namespace", ent.Namespace, "ent_name", ent.Name)
+	logger := tracing.LoggerFromContext(ctx)
 	if !association.AllowVersion(*entVersion, ent.Associated(), logger, r.recorder) {
 		return reconcile.Result{}, nil // will eventually retry once updated
 	}
@@ -251,7 +263,7 @@ func (r *ReconcileEnterpriseSearch) doReconcile(ctx context.Context, ent entv1be
 		return reconcile.Result{}, fmt.Errorf("reconcile deployment: %w", err)
 	}
 
-	err = r.updateStatus(ent, deploy, svc.Name)
+	err = r.updateStatus(ctx, ent, deploy, svc.Name)
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("updating status: %w", err)
 	}
@@ -259,44 +271,28 @@ func (r *ReconcileEnterpriseSearch) doReconcile(ctx context.Context, ent entv1be
 	return results.Aggregate()
 }
 
-func (r *ReconcileEnterpriseSearch) validate(ctx context.Context, ent *entv1beta1.EnterpriseSearch) error {
-	span, vctx := apm.StartSpan(ctx, "validate", tracing.SpanTypeApp)
-	defer span.End()
+func (r *ReconcileEnterpriseSearch) updateStatus(ctx context.Context, ent entv1beta1.EnterpriseSearch, deploy appsv1.Deployment, svcName string) error {
+	return tracing.DoInSpan(ctx, "update_status", func(ctx context.Context) error {
+		pods, err := k8s.PodsMatchingLabels(r.K8sClient(), ent.Namespace, map[string]string{EnterpriseSearchNameLabelName: ent.Name})
+		if err != nil {
+			return err
+		}
+		newStatus := entv1beta1.EnterpriseSearchStatus{
+			DeploymentStatus: common.DeploymentStatus(ent.Status.DeploymentStatus, deploy, pods, VersionLabelName),
+			ExternalService:  svcName,
+			Association:      ent.Status.Association,
+		}
 
-	if err := ent.ValidateCreate(); err != nil {
-		log.Error(err, "Validation failed")
-		k8s.EmitErrorEvent(r.recorder, err, ent, events.EventReasonValidation, err.Error())
-		return tracing.CaptureError(vctx, err)
-	}
-
-	return nil
-}
-
-func (r *ReconcileEnterpriseSearch) updateStatus(ent entv1beta1.EnterpriseSearch, deploy appsv1.Deployment, svcName string) error {
-	pods, err := k8s.PodsMatchingLabels(r.K8sClient(), ent.Namespace, map[string]string{EnterpriseSearchNameLabelName: ent.Name})
-	if err != nil {
-		return err
-	}
-	newStatus := entv1beta1.EnterpriseSearchStatus{
-		DeploymentStatus: common.DeploymentStatus(ent.Status.DeploymentStatus, deploy, pods, VersionLabelName),
-		ExternalService:  svcName,
-		Association:      ent.Status.Association,
-	}
-
-	if reflect.DeepEqual(newStatus, ent.Status) {
-		return nil // nothing to do
-	}
-	if newStatus.IsDegraded(ent.Status.DeploymentStatus) {
-		r.recorder.Event(&ent, corev1.EventTypeWarning, events.EventReasonUnhealthy, "Enterprise Search health degraded")
-	}
-	log.V(1).Info("Updating status",
-		"iteration", atomic.LoadUint64(&r.iteration),
-		"namespace", ent.Namespace,
-		"ent_name", ent.Name,
-		"status", newStatus,
-	)
-	ent.Status = newStatus
-	return common.UpdateStatus(r.Client, &ent)
+		if reflect.DeepEqual(newStatus, ent.Status) {
+			return nil // nothing to do
+		}
+		if newStatus.IsDegraded(ent.Status.DeploymentStatus) {
+			r.recorder.Event(&ent, corev1.EventTypeWarning, events.EventReasonUnhealthy, "Enterprise Search health degraded")
+		}
+		tracing.LoggerFromContext(ctx).V(1).Info("Updating status", "iteration", atomic.LoadUint64(&r.iteration), "status", newStatus)
+		ent.Status = newStatus
+		return common.UpdateStatus(r.Client, &ent)
+	})
 }
 
 func NewService(ent entv1beta1.EnterpriseSearch) *corev1.Service {

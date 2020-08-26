@@ -15,13 +15,11 @@ import (
 	esclient "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/services"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
+	"github.com/elastic/cloud-on-k8s/pkg/utils/log"
 	"go.elastic.co/apm"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/tools/record"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
-
-var log = logf.Log.WithName("remotecluster")
 
 const enterpriseFeaturesDisabledMsg = "Remote cluster is an enterprise feature. Enterprise features are disabled"
 
@@ -37,7 +35,7 @@ func UpdateSettings(
 	licenseChecker license.Checker,
 	es esv1.Elasticsearch,
 ) (bool, error) {
-	span, _ := apm.StartSpan(ctx, "update_remote_clusters", tracing.SpanTypeApp)
+	span, ctx := apm.StartSpan(ctx, "update_remote_clusters", tracing.SpanTypeApp)
 	defer span.End()
 
 	remoteClustersInSpec := getRemoteClustersInSpec(es)
@@ -46,7 +44,7 @@ func UpdateSettings(
 		return true, err
 	}
 	if !enabled && len(remoteClustersInSpec) > 0 {
-		log.Info(
+		log.FromContext(ctx).Info(
 			enterpriseFeaturesDisabledMsg,
 			"namespace", es.Namespace, "es_name", es.Name,
 		)
@@ -54,7 +52,7 @@ func UpdateSettings(
 		return false, nil
 	}
 
-	return updateSettingsInternal(remoteClustersInSpec, c, esClient, es)
+	return updateSettingsInternal(ctx, remoteClustersInSpec, c, esClient, es)
 }
 
 // updateSettingsInternal updates remote clusters in Elasticsearch. It also keeps track of any remote clusters which
@@ -69,6 +67,7 @@ func UpdateSettings(
 // 4. Update the annotation on the Elasticsearch object
 // 5. Apply the settings through the Elasticsearch API
 func updateSettingsInternal(
+	ctx context.Context,
 	remoteClustersInSpec map[string]esv1.RemoteCluster,
 	c k8s.Client,
 	esClient esclient.Client,
@@ -129,7 +128,7 @@ func updateSettingsInternal(
 		// Apply the settings
 		sort.Strings(remoteClustersToUpdate)
 		sort.Strings(remoteClustersToDelete)
-		log.Info("Updating remote cluster settings",
+		log.FromContext(ctx).Info("Updating remote cluster settings",
 			"namespace", es.Namespace,
 			"es_name", es.Name,
 			"updated_remote_clusters", remoteClustersToUpdate,

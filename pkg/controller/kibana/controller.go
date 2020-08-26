@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"sync/atomic"
 
-	"go.elastic.co/apm"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -222,23 +221,20 @@ func (r *ReconcileKibana) internalReconcile(ctx context.Context, request reconci
 }
 
 func (r *ReconcileKibana) updateStatus(ctx context.Context, state State) error {
-	span, _ := apm.StartSpan(ctx, "update_status", tracing.SpanTypeApp)
-	defer span.End()
+	return tracing.DoInSpan(ctx, "update_status", func(ctx context.Context) error {
+		current := state.originalKibana
+		if reflect.DeepEqual(current.Status, state.Kibana.Status) {
+			return nil
+		}
 
-	current := state.originalKibana
-	if reflect.DeepEqual(current.Status, state.Kibana.Status) {
-		return nil
-	}
-	if state.Kibana.Status.DeploymentStatus.IsDegraded(current.Status.DeploymentStatus) {
-		r.recorder.Event(current, corev1.EventTypeWarning, events.EventReasonUnhealthy, "Kibana health degraded")
-	}
-	tracing.LoggerFromContext(ctx).V(1).Info("Updating status",
-		"iteration", atomic.LoadUint64(&r.iteration),
-		"namespace", state.Kibana.Namespace,
-		"kibana_name", state.Kibana.Name,
-		"status", state.Kibana.Status,
-	)
-	return common.UpdateStatus(r.Client, state.Kibana)
+		if state.Kibana.Status.DeploymentStatus.IsDegraded(current.Status.DeploymentStatus) {
+			r.recorder.Event(current, corev1.EventTypeWarning, events.EventReasonUnhealthy, "Kibana health degraded")
+		}
+
+		tracing.LoggerFromContext(ctx).V(1).Info("Updating status", "iteration", atomic.LoadUint64(&r.iteration), "status", state.Kibana.Status)
+
+		return common.UpdateStatus(r.Client, state.Kibana)
+	})
 }
 
 func (r *ReconcileKibana) onDelete(obj types.NamespacedName) {
