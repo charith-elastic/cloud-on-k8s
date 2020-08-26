@@ -119,7 +119,8 @@ func (d *driver) Reconcile(
 		return results
 	}
 
-	logger := log.WithValues("namespace", kb.Namespace, "kb_name", kb.Name)
+	logger := tracing.LoggerFromContext(ctx)
+
 	if !association.AllowVersion(d.version, kb, logger, d.Recorder()) {
 		return results // will eventually retry
 	}

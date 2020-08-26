@@ -17,7 +17,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -40,8 +40,6 @@ const (
 	name                = "kibana-controller"
 	configChecksumLabel = "kibana.k8s.elastic.co/config-checksum"
 )
-
-var log = logf.Log.WithName(name)
 
 // Add creates a new Kibana Controller and adds it to the Manager with default RBAC. The Manager will set fields on the Controller
 // and Start it when the Manager is Started.
@@ -127,9 +125,13 @@ type ReconcileKibana struct {
 // Reconcile reads that state of the cluster for a Kibana object and makes changes based on the state read and what is
 // in the Kibana.Spec
 func (r *ReconcileKibana) Reconcile(request reconcile.Request) (reconcile.Result, error) {
-	defer common.LogReconciliationRun(log, request, "kibana_name", &r.iteration)()
-	tx, ctx := tracing.NewTransaction(tracing.Tracer(), request.NamespacedName, "kibana")
-	defer tracing.EndTransaction(tx)
+	ctx := common.NewReconciliationContext(crlog.Log.WithName(name), request.NamespacedName, "kibana")
+	return tracing.TraceReconciliation(ctx, request, "kibana", r.doReconcile)
+}
+
+func (r *ReconcileKibana) doReconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	logger := tracing.LoggerFromContext(ctx)
+	defer common.LogReconciliationRun(logger, request, &r.iteration)()
 
 	// retrieve the kibana object
 	var kb kbv1.Kibana
@@ -141,23 +143,23 @@ func (r *ReconcileKibana) Reconcile(request reconcile.Request) (reconcile.Result
 			})
 			return reconcile.Result{}, nil
 		}
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	if common.IsUnmanaged(&kb) {
-		log.Info("Object is currently not managed by this controller. Skipping reconciliation", "namespace", kb.Namespace, "kibana_name", kb.Name)
+		logger.Info("Object is currently not managed by this controller. Skipping reconciliation")
 		return reconcile.Result{}, nil
 	}
 
 	// check for compatibility with the operator version
 	compatible, err := r.isCompatible(ctx, &kb)
 	if err != nil || !compatible {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	// Remove any previous Finalizers
 	if err := finalizer.RemoveAll(r.Client, &kb); err != nil {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	// Kibana will be deleted nothing to do other than remove the watches
@@ -169,11 +171,11 @@ func (r *ReconcileKibana) Reconcile(request reconcile.Request) (reconcile.Result
 	// update controller version annotation if necessary
 	err = annotation.UpdateControllerVersion(ctx, r.Client, &kb, r.params.OperatorInfo.BuildInfo.Version)
 	if err != nil {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	// main reconciliation logic
-	return r.doReconcile(ctx, request, &kb)
+	return r.internalReconcile(ctx, request, &kb)
 }
 
 func (r *ReconcileKibana) isCompatible(ctx context.Context, kb *kbv1.Kibana) (bool, error) {
@@ -185,15 +187,23 @@ func (r *ReconcileKibana) isCompatible(ctx context.Context, kb *kbv1.Kibana) (bo
 	return compat, err
 }
 
-func (r *ReconcileKibana) doReconcile(ctx context.Context, request reconcile.Request, kb *kbv1.Kibana) (reconcile.Result, error) {
+func (r *ReconcileKibana) internalReconcile(ctx context.Context, request reconcile.Request, kb *kbv1.Kibana) (reconcile.Result, error) {
 	// Run validation in case the webhook is disabled
-	if err := r.validate(ctx, kb); err != nil {
+	if err := tracing.DoInSpan(ctx, "validate", func(ctx context.Context) error {
+		if err := kb.ValidateCreate(); err != nil {
+			tracing.LoggerFromContext(ctx).Error(err, "Validation failed")
+			k8s.EmitErrorEvent(r.recorder, err, kb, events.EventReasonValidation, err.Error())
+			return err
+		}
+
+		return nil
+	}); err != nil {
 		return reconcile.Result{}, err
 	}
 
 	driver, err := newDriver(r, r.dynamicWatches, r.recorder, kb)
 	if err != nil {
-		return reconcile.Result{}, tracing.CaptureError(ctx, err)
+		return reconcile.Result{}, err
 	}
 
 	state := NewState(request, kb)
@@ -202,26 +212,13 @@ func (r *ReconcileKibana) doReconcile(ctx context.Context, request reconcile.Req
 	// update status
 	err = r.updateStatus(ctx, state)
 	if err != nil && apierrors.IsConflict(err) {
-		log.V(1).Info("Conflict while updating status", "namespace", kb.Namespace, "kibana_name", kb.Name)
+		tracing.LoggerFromContext(ctx).V(1).Info("Conflict while updating status")
 		return reconcile.Result{Requeue: true}, nil
 	}
 
 	res, err := results.WithError(err).Aggregate()
 	k8s.EmitErrorEvent(r.recorder, err, kb, events.EventReconciliationError, "Reconciliation error: %v", err)
 	return res, err
-}
-
-func (r *ReconcileKibana) validate(ctx context.Context, kb *kbv1.Kibana) error {
-	span, vctx := apm.StartSpan(ctx, "validate", tracing.SpanTypeApp)
-	defer span.End()
-
-	if err := kb.ValidateCreate(); err != nil {
-		log.Error(err, "Validation failed")
-		k8s.EmitErrorEvent(r.recorder, err, kb, events.EventReasonValidation, err.Error())
-		return tracing.CaptureError(vctx, err)
-	}
-
-	return nil
 }
 
 func (r *ReconcileKibana) updateStatus(ctx context.Context, state State) error {
@@ -235,7 +232,7 @@ func (r *ReconcileKibana) updateStatus(ctx context.Context, state State) error {
 	if state.Kibana.Status.DeploymentStatus.IsDegraded(current.Status.DeploymentStatus) {
 		r.recorder.Event(current, corev1.EventTypeWarning, events.EventReasonUnhealthy, "Kibana health degraded")
 	}
-	log.V(1).Info("Updating status",
+	tracing.LoggerFromContext(ctx).V(1).Info("Updating status",
 		"iteration", atomic.LoadUint64(&r.iteration),
 		"namespace", state.Kibana.Namespace,
 		"kibana_name", state.Kibana.Name,
