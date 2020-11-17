@@ -1,0 +1,14 @@
+---
+target:
+  kind: Elasticsearch
+clientConf:
+  requestTimeout: 30s
+  retryAttempts: 3
+  retryBackoff: 10s
+  retryMaxDuration: 300s
+apiCalls:
+  - method: POST
+    path: _ilm/policy/my_policy
+    payload: {"k":"v"}
+    successCodes: [200]
+    retry: true

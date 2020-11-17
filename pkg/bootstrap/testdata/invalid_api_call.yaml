@@ -1,0 +1,15 @@
+---
+target:
+  kind: Elasticsearch
+  namespace: default
+  name: quickstart
+clientConf:
+  requestTimeout: 30s
+  retryAttempts: 3
+  retryBackoff: 10s
+  retryMaxDuration: 300s
+apiCalls:
+  - method: POST
+    payload: {"k":"v"}
+    successCodes: [200]
+    retry: true

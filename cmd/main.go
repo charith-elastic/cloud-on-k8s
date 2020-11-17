@@ -5,6 +5,7 @@
 package main
 
 import (
+	"github.com/elastic/cloud-on-k8s/cmd/bootstrap"
 	"github.com/elastic/cloud-on-k8s/cmd/manager"
 	"github.com/elastic/cloud-on-k8s/pkg/about"
 	"github.com/elastic/cloud-on-k8s/pkg/dev"
@@ -22,6 +23,7 @@ func main() {
 		SilenceUsage: true,
 	}
 	rootCmd.AddCommand(manager.Command())
+	rootCmd.AddCommand(bootstrap.Command())
 
 	// development mode is only available as a command line flag to avoid accidentally enabling it
 	rootCmd.PersistentFlags().BoolVar(&dev.Enabled, "development", false, "turns on development mode")

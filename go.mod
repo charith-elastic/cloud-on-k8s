@@ -42,6 +42,7 @@ require (
 	go.uber.org/automaxprocs v1.3.0
 	go.uber.org/zap v1.16.0
 	golang.org/x/crypto v0.0.0-20200510223506-06a226fb4e37
+	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 	golang.org/x/time v0.0.0-20190921001708-c4c64cad1fd0 // indirect
 	google.golang.org/appengine v1.6.5 // indirect
 	gopkg.in/yaml.v2 v2.3.0
