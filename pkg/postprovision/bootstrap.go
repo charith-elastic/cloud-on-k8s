@@ -2,7 +2,7 @@
 // or more contributor license agreements. Licensed under the Elastic License;
 // you may not use this file except in compliance with the Elastic License.
 
-package bootstrap
+package postprovision
 
 import (
 	"context"
@@ -34,7 +34,7 @@ func annotateAsDone(ctx context.Context, c client.Client, key client.ObjectKey, 
 			return err
 		}
 
-		if err := annotation.SetBootstrapped(obj); err != nil {
+		if err := annotation.SetPostProvisionComplete(obj); err != nil {
 			return err
 		}
 

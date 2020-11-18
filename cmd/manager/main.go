@@ -41,6 +41,7 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/kibana"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/license"
 	licensetrial "github.com/elastic/cloud-on-k8s/pkg/controller/license/trial"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/postprovision"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/remoteca"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/webhook"
 	"github.com/elastic/cloud-on-k8s/pkg/dev"
@@ -640,6 +641,7 @@ func registerControllers(mgr manager.Manager, params operator.Parameters, access
 		{name: "Beats", registerFunc: beat.Add},
 		{name: "License", registerFunc: license.Add},
 		{name: "LicenseTrial", registerFunc: licensetrial.Add},
+		{name: "PostProvision", registerFunc: postprovision.Add},
 	}
 
 	for _, c := range controllers {

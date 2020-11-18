@@ -2,7 +2,7 @@
 // or more contributor license agreements. Licensed under the Elastic License;
 // you may not use this file except in compliance with the Elastic License.
 
-package bootstrap
+package postprovision
 
 import (
 	"bufio"
@@ -12,7 +12,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/elastic/cloud-on-k8s/pkg/bootstrap"
+	"github.com/elastic/cloud-on-k8s/pkg/postprovision"
 	logconf "github.com/elastic/cloud-on-k8s/pkg/utils/log"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
@@ -28,8 +28,8 @@ var (
 
 func Command() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "bootstrap",
-		Short: "Run bootstrap job to initialize a resource",
+		Use:   "postprovision",
+		Short: "Run postprovision job to initialize a resource",
 		RunE:  doRun,
 	}
 
@@ -43,7 +43,7 @@ func Command() *cobra.Command {
 
 func doRun(_ *cobra.Command, _ []string) error {
 	logconf.InitLogger()
-	logger := logf.Log.WithName("bootstrap").WithValues("path", jobDefFile)
+	logger := logf.Log.WithName("postprovision").WithValues("path", jobDefFile)
 
 	logger.Info("Opening job definition")
 
@@ -57,7 +57,7 @@ func doRun(_ *cobra.Command, _ []string) error {
 
 	logger.Info("Parsing job definition")
 
-	jd, err := bootstrap.Load(r)
+	jd, err := postprovision.Load(r)
 	if err != nil {
 		logger.Error(err, "Failed to parse job definition")
 		return err
@@ -80,7 +80,7 @@ func doRun(_ *cobra.Command, _ []string) error {
 
 	g.Go(func() error {
 		logger.Info("Executing job")
-		if err := bootstrap.Run(ctx, jd); err != nil {
+		if err := postprovision.Run(ctx, jd); err != nil {
 			logger.Error(err, "Job failed")
 			return err
 		}

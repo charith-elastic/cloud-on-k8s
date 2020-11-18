@@ -12,7 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestGetBootstrapReadinessGate(t *testing.T) {
+func TestGetPostProvisionReadinessGate(t *testing.T) {
 	testCases := []struct {
 		name    string
 		objMeta metav1.ObjectMeta
@@ -25,20 +25,20 @@ func TestGetBootstrapReadinessGate(t *testing.T) {
 		},
 		{
 			name:    "set",
-			objMeta: metav1.ObjectMeta{Annotations: map[string]string{BootstrapReadinessGateAnnotation: "mygate"}},
+			objMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionReadinessGateAnnotation: "mygate"}},
 			want:    "mygate",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			have := GetBootstrapReadinessGate(tc.objMeta)
+			have := GetPostProvisionReadinessGate(tc.objMeta)
 			require.Equal(t, tc.want, have)
 		})
 	}
 }
 
-func TestIsBootstrapped(t *testing.T) {
+func TestIsPostProvisionComplete(t *testing.T) {
 	testCases := []struct {
 		name    string
 		objMeta metav1.ObjectMeta
@@ -51,30 +51,30 @@ func TestIsBootstrapped(t *testing.T) {
 		},
 		{
 			name:    "no readiness gate",
-			objMeta: metav1.ObjectMeta{Annotations: map[string]string{BootstrappedAnnotation: "rubbish"}},
+			objMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionCompleteAnnotation: "rubbish"}},
 			want:    true,
 		},
 		{
 			name:    "not ok",
-			objMeta: metav1.ObjectMeta{Annotations: map[string]string{BootstrapReadinessGateAnnotation: "mygate", BootstrappedAnnotation: "false"}},
+			objMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionReadinessGateAnnotation: "mygate", PostProvisionCompleteAnnotation: "false"}},
 			want:    false,
 		},
 		{
 			name:    "ok",
-			objMeta: metav1.ObjectMeta{Annotations: map[string]string{BootstrapReadinessGateAnnotation: "mygate", BootstrappedAnnotation: "true"}},
+			objMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionReadinessGateAnnotation: "mygate", PostProvisionCompleteAnnotation: "true"}},
 			want:    true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			have := IsBootstrapped(tc.objMeta)
+			have := IsPostProvisionComplete(tc.objMeta)
 			require.Equal(t, tc.want, have)
 		})
 	}
 }
 
-func TestSetBootstrapped(t *testing.T) {
+func TestSetPostProvisionComplete(t *testing.T) {
 	testCases := []struct {
 		name    string
 		obj     *esv1.Elasticsearch
@@ -84,13 +84,13 @@ func TestSetBootstrapped(t *testing.T) {
 		{
 			name: "valid object",
 			obj:  &esv1.Elasticsearch{},
-			want: &esv1.Elasticsearch{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{BootstrappedAnnotation: "true"}}},
+			want: &esv1.Elasticsearch{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionCompleteAnnotation: "true"}}},
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := SetBootstrapped(tc.obj)
+			err := SetPostProvisionComplete(tc.obj)
 			if tc.wantErr {
 				require.Error(t, err)
 				return

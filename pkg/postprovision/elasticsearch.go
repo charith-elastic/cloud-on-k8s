@@ -2,7 +2,7 @@
 // or more contributor license agreements. Licensed under the Elastic License;
 // you may not use this file except in compliance with the Elastic License.
 
-package bootstrap
+package postprovision
 
 import (
 	"bytes"
@@ -176,7 +176,7 @@ func getElasticsearchClient(ctx context.Context, k8sclient client.Client, jd *Jo
 
 func getElasticsearchURL(ctx context.Context, k8sclient client.Client, jd *JobDef, es *esv1.Elasticsearch) (string, error) {
 	// If there's no readiness gate, the service can be accessed directly.
-	if annotation.GetBootstrapReadinessGate(es.ObjectMeta) == "" {
+	if annotation.GetPostProvisionReadinessGate(es.ObjectMeta) == "" {
 		return services.ExternalServiceURL(*es), nil
 	}
 
