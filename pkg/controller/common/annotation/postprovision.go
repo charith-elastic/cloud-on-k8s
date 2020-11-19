@@ -10,24 +10,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-const (
-	PostProvisionCompleteAnnotation      = "eck.k8s.elastic.co/post-provision-complete"
-	PostProvisionReadinessGateAnnotation = "eck.k8s.elastic.co/post-provision-readiness-gate"
-)
-
-// GetPostProvisionReadinessGate returns the name of the readiness gate specified in the annotation.
-func GetPostProvisionReadinessGate(objMeta metav1.ObjectMeta) string {
-	if len(objMeta.Annotations) == 0 {
-		return ""
-	}
-
-	return objMeta.Annotations[PostProvisionReadinessGateAnnotation]
-}
+const PostProvisionCompleteAnnotation = "eck.k8s.elastic.co/post-provision-complete"
 
 // IsPostProvisionComplete returns true if the object has the annotation to indicate that post-provision is complete.
 func IsPostProvisionComplete(objMeta metav1.ObjectMeta) bool {
-	if GetPostProvisionReadinessGate(objMeta) == "" {
-		return true
+	if len(objMeta.Annotations) == 0 {
+		return false
 	}
 
 	return objMeta.Annotations[PostProvisionCompleteAnnotation] == "true"

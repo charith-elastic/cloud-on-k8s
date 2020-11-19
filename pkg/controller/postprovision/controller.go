@@ -10,6 +10,7 @@ import (
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/annotation"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/operator"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
+	"github.com/elastic/cloud-on-k8s/pkg/postprovision"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -61,14 +62,25 @@ func addWatches(ctrlr controller.Controller, c k8s.Client) error {
 					return nil
 				}
 
-				return []reconcile.Request{
-					{
-						NamespacedName: types.NamespacedName{
-							Namespace: object.Meta.GetNamespace(),
-							Name:      object.Meta.GetName(),
-						},
-					},
+				pod, ok := object.Object.(*corev1.Pod)
+				if !ok {
+					return nil
 				}
+
+				for _, cond := range pod.Status.Conditions {
+					if cond.Type == postprovision.ReadinessGate {
+						return []reconcile.Request{
+							{
+								NamespacedName: types.NamespacedName{
+									Namespace: object.Meta.GetNamespace(),
+									Name:      object.Meta.GetName(),
+								},
+							},
+						}
+					}
+				}
+
+				return nil
 			})})
 }
 
@@ -102,22 +114,19 @@ func (rpp *reconcilePostProvision) Reconcile(request reconcile.Request) (reconci
 		return result, err
 	}
 
-	rg := annotation.GetPostProvisionReadinessGate(es.ObjectMeta)
-	if rg == "" {
-		return result, nil
-	}
-
-	// requeue if post provision has not completed
+	condValue := corev1.ConditionTrue
 	if !annotation.IsPostProvisionComplete(es.ObjectMeta) {
-		return reconcile.Result{Requeue: true}, nil
+		condValue = corev1.ConditionFalse
+		// we want to requeue until the pod is marked as ready
+		result = reconcile.Result{Requeue: true}
 	}
 
 	for i, c := range pod.Status.Conditions {
-		if c.Type == corev1.PodConditionType(rg) && c.Status != corev1.ConditionTrue {
-			pod.Status.Conditions[i].Status = corev1.ConditionTrue
+		if c.Type == postprovision.ReadinessGate && c.Status != condValue {
+			pod.Status.Conditions[i].Status = condValue
 			return result, rpp.client.Status().Update(&pod)
 		}
 	}
 
-	return result, nil
+	return reconcile.Result{}, nil
 }

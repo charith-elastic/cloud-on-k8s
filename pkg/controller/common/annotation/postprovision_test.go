@@ -12,32 +12,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestGetPostProvisionReadinessGate(t *testing.T) {
-	testCases := []struct {
-		name    string
-		objMeta metav1.ObjectMeta
-		want    string
-	}{
-		{
-			name:    "empty",
-			objMeta: metav1.ObjectMeta{},
-			want:    "",
-		},
-		{
-			name:    "set",
-			objMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionReadinessGateAnnotation: "mygate"}},
-			want:    "mygate",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			have := GetPostProvisionReadinessGate(tc.objMeta)
-			require.Equal(t, tc.want, have)
-		})
-	}
-}
-
 func TestIsPostProvisionComplete(t *testing.T) {
 	testCases := []struct {
 		name    string
@@ -47,21 +21,16 @@ func TestIsPostProvisionComplete(t *testing.T) {
 		{
 			name:    "empty",
 			objMeta: metav1.ObjectMeta{},
-			want:    true,
-		},
-		{
-			name:    "no readiness gate",
-			objMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionCompleteAnnotation: "rubbish"}},
-			want:    true,
+			want:    false,
 		},
 		{
 			name:    "not ok",
-			objMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionReadinessGateAnnotation: "mygate", PostProvisionCompleteAnnotation: "false"}},
+			objMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionCompleteAnnotation: "false"}},
 			want:    false,
 		},
 		{
 			name:    "ok",
-			objMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionReadinessGateAnnotation: "mygate", PostProvisionCompleteAnnotation: "true"}},
+			objMeta: metav1.ObjectMeta{Annotations: map[string]string{PostProvisionCompleteAnnotation: "true"}},
 			want:    true,
 		},
 	}

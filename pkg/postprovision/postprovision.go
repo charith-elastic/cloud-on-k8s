@@ -14,6 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const ReadinessGate = "eck.k8s.elastic.co/post-provision"
+
 // Run starts the execution of the job.
 func Run(ctx context.Context, jd *JobDef) error {
 	if jd.Target.Kind != ResourceKindElasticsearch {
