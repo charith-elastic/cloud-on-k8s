@@ -24,6 +24,7 @@ func TestLoad(t *testing.T) {
 			name:  "valid YAML",
 			input: "testdata/valid_yaml.yaml",
 			want: &JobDef{
+				NoProgressTimeout: Duration(1500 * time.Second),
 				Target: ResourceRef{
 					Kind:      ResourceKindElasticsearch,
 					Namespace: "default",
@@ -50,6 +51,7 @@ func TestLoad(t *testing.T) {
 			name:  "valid JSON",
 			input: "testdata/valid_json.json",
 			want: &JobDef{
+				NoProgressTimeout: Duration(1500 * time.Second),
 				Target: ResourceRef{
 					Kind:      ResourceKindElasticsearch,
 					Namespace: "default",

@@ -18,7 +18,6 @@ import (
 	"time"
 
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
-	"github.com/elastic/cloud-on-k8s/pkg/controller/common/annotation"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/certificates"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/version"
 	esclient "github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/client"
@@ -45,7 +44,7 @@ func runElasticsearchJob(ctx context.Context, k8sclient client.Client, jd *JobDe
 	log := logf.FromContext(ctx)
 
 	log.V(1).Info("Waiting for Elasticsearch resource")
-	es, err := waitForElasticsearch(ctx, jd)
+	es, err := waitForElasticsearch(ctx, k8sclient, jd)
 	if err != nil {
 		log.Error(err, "Failed to find Elasticsearch")
 		return fmt.Errorf("failed to find Elasticsearch: %w", err)
@@ -79,8 +78,11 @@ type esHolder struct {
 	err error
 }
 
-func waitForElasticsearch(ctx context.Context, jd *JobDef) (*esv1.Elasticsearch, error) {
+func waitForElasticsearch(ctx context.Context, k8sclient client.Client, jd *JobDef) (*esv1.Elasticsearch, error) {
+	log := logf.FromContext(ctx)
+
 	result := make(chan esHolder, 1)
+	defer close(result)
 
 	checkESReady := func(obj interface{}) {
 		es, ok := obj.(*esv1.Elasticsearch)
@@ -92,7 +94,21 @@ func waitForElasticsearch(ctx context.Context, jd *JobDef) (*esv1.Elasticsearch,
 			return
 		}
 
-		if es.Status.Health == esv1.ElasticsearchGreenHealth && es.Status.Phase == esv1.ElasticsearchReadyPhase {
+		c, err := getElasticsearchClient(ctx, k8sclient, jd, es)
+		if err != nil {
+			log.V(1).Info("Failed to get Elasticsearch client", "error", err)
+			return
+		}
+
+		h, err := c.GetClusterHealth(ctx)
+		if err != nil {
+			log.V(1).Info("Failed to get Elasticsearch health", "error", err)
+			return
+		}
+
+		log.V(1).Info("Elasticsearch health", "health", h)
+
+		if h.Status == esv1.ElasticsearchGreenHealth {
 			result <- esHolder{es: es}
 		}
 	}
@@ -116,14 +132,14 @@ func waitForElasticsearch(ctx context.Context, jd *JobDef) (*esv1.Elasticsearch,
 		},
 	}
 
-	stopChan, err := watchObject(ctx, jd.Target.Namespace, handler, &esv1.Elasticsearch{})
-	if err != nil {
-		close(result)
+	ctx, cancelFunc := context.WithTimeout(ctx, time.Duration(jd.NoProgressTimeout))
+	defer cancelFunc()
+
+	if err := watchObject(ctx, jd.Target.Namespace, handler, &esv1.Elasticsearch{}); err != nil {
 		return nil, fmt.Errorf("failed to watch object: %w", err)
 	}
 
 	r := <-result
-	close(stopChan)
 
 	return r.es, r.err
 }
@@ -176,7 +192,7 @@ func getElasticsearchClient(ctx context.Context, k8sclient client.Client, jd *Jo
 
 func getElasticsearchURL(ctx context.Context, k8sclient client.Client, jd *JobDef, es *esv1.Elasticsearch) (string, error) {
 	// If there's no readiness gate, the service can be accessed directly.
-	if annotation.GetPostProvisionReadinessGate(es.ObjectMeta) == "" {
+	if !hasReadinessGate(es) {
 		return services.ExternalServiceURL(*es), nil
 	}
 
@@ -195,6 +211,18 @@ func getElasticsearchURL(ctx context.Context, k8sclient client.Client, jd *JobDe
 	}
 
 	return "", errNoAvailablePods
+}
+
+func hasReadinessGate(es *esv1.Elasticsearch) bool {
+	for _, ns := range es.Spec.NodeSets {
+		for _, rg := range ns.PodTemplate.Spec.ReadinessGates {
+			if rg.ConditionType == ReadinessGate {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func issueAPICalls(ctx context.Context, jd *JobDef, c esclient.Client) error {

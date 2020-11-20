@@ -27,28 +27,27 @@ func newK8sClient() (client.Client, error) {
 	return client.New(conf, client.Options{})
 }
 
-func watchObject(ctx context.Context, namespace string, handler toolscache.ResourceEventHandler, obj runtime.Object) (chan struct{}, error) {
+func watchObject(ctx context.Context, namespace string, handler toolscache.ResourceEventHandler, obj runtime.Object) error {
 	controllerscheme.SetupScheme()
 
 	conf, err := config.GetConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create REST config: %w", err)
+		return fmt.Errorf("failed to create REST config: %w", err)
 	}
 
 	c, err := cache.New(conf, cache.Options{Namespace: namespace})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create cache: %w", err)
+		return fmt.Errorf("failed to create cache: %w", err)
 	}
 
 	informer, err := c.GetInformer(ctx, obj)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get informer: %w", err)
+		return fmt.Errorf("failed to get informer: %w", err)
 	}
 
 	informer.AddEventHandler(handler)
 
-	stopChan := make(chan struct{})
-	go c.Start(stopChan)
+	go c.Start(ctx.Done())
 
-	return stopChan, nil
+	return nil
 }

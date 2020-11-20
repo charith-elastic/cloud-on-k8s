@@ -1,4 +1,5 @@
 ---
+noProgressTimeout: 1500s
 target:
   kind: Elasticsearch
   namespace: default

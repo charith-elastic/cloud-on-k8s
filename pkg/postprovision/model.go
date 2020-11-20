@@ -21,9 +21,10 @@ var errInvalidJobDef = errors.New("invalid job definition")
 
 // JobDef represents the structure of a job definition.
 type JobDef struct {
-	Target     ResourceRef `json:"target"`
-	APICalls   []APICall   `json:"apiCalls"`
-	ClientConf *ClientConf `json:"clientConf"`
+	NoProgressTimeout Duration    `json:"noProgressTimeout"`
+	Target            ResourceRef `json:"target"`
+	APICalls          []APICall   `json:"apiCalls"`
+	ClientConf        *ClientConf `json:"clientConf"`
 }
 
 // ResourceRef defines a reference to an ECK resource.

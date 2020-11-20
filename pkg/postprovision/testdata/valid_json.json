@@ -1,14 +1,15 @@
 {
+  "noProgressTimeout": "1500s",
   "target": {
     "kind": "Elasticsearch",
     "namespace": "default",
     "name": "quickstart"
   },
   "clientConf": {
-      "requestTimeout": "30s",
-      "retryAttempts": 3,
-      "retryBackoff": "10s",
-      "retryMaxDuration": "300s"
+    "requestTimeout": "30s",
+    "retryAttempts": 3,
+    "retryBackoff": "10s",
+    "retryMaxDuration": "300s"
   },
   "apiCalls": [
     {

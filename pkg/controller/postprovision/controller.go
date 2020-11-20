@@ -5,14 +5,19 @@
 package postprovision
 
 import (
+	"time"
+
 	esv1 "github.com/elastic/cloud-on-k8s/pkg/apis/elasticsearch/v1"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/annotation"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/common/operator"
+	"github.com/elastic/cloud-on-k8s/pkg/controller/common/tracing"
 	"github.com/elastic/cloud-on-k8s/pkg/controller/elasticsearch/label"
 	"github.com/elastic/cloud-on-k8s/pkg/postprovision"
 	"github.com/elastic/cloud-on-k8s/pkg/utils/k8s"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -41,11 +46,11 @@ func Add(mgr manager.Manager, p operator.Parameters) error {
 // newReconciler returns a new reconcile.Reconciler
 func newReconciler(mgr manager.Manager, params operator.Parameters) *reconcilePostProvision {
 	c := k8s.WrapClient(mgr.GetClient())
-	return &reconcilePostProvision{client: c}
+	return &reconcilePostProvision{Parameters: params, client: c}
 }
 
 func addWatches(ctrlr controller.Controller, c k8s.Client) error {
-	// Watch pods belonging to ES clusters that have a pod condition
+	// Watch pods belonging to ES clusters that have a readiness gate
 	return ctrlr.Watch(
 		&source.Kind{Type: &corev1.Pod{}},
 		&handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(
@@ -67,8 +72,8 @@ func addWatches(ctrlr controller.Controller, c k8s.Client) error {
 					return nil
 				}
 
-				for _, cond := range pod.Status.Conditions {
-					if cond.Type == postprovision.ReadinessGate {
+				for _, rg := range pod.Spec.ReadinessGates {
+					if rg.ConditionType == postprovision.ReadinessGate {
 						return []reconcile.Request{
 							{
 								NamespacedName: types.NamespacedName{
@@ -85,17 +90,21 @@ func addWatches(ctrlr controller.Controller, c k8s.Client) error {
 }
 
 type reconcilePostProvision struct {
+	operator.Parameters
 	client    k8s.Client
 	iteration uint64
 }
 
 func (rpp *reconcilePostProvision) Reconcile(request reconcile.Request) (reconcile.Result, error) {
 	defer common.LogReconciliationRun(log, request, "es_name", &rpp.iteration)()
+	tx, ctx := tracing.NewTransaction(rpp.Tracer, request.NamespacedName, "postprovision")
+	defer tracing.EndTransaction(tx)
 
+	c := rpp.client.WithContext(ctx)
 	result := reconcile.Result{}
 
 	var pod corev1.Pod
-	if err := rpp.client.Get(request.NamespacedName, &pod); err != nil {
+	if err := c.Get(request.NamespacedName, &pod); err != nil {
 		return result, err
 	}
 
@@ -110,23 +119,47 @@ func (rpp *reconcilePostProvision) Reconcile(request reconcile.Request) (reconci
 	}
 
 	var es esv1.Elasticsearch
-	if err := rpp.client.Get(client.ObjectKey{Namespace: pod.Namespace, Name: esName}, &es); err != nil {
+	if err := c.Get(client.ObjectKey{Namespace: pod.Namespace, Name: esName}, &es); err != nil {
 		return result, err
 	}
 
 	condValue := corev1.ConditionTrue
 	if !annotation.IsPostProvisionComplete(es.ObjectMeta) {
 		condValue = corev1.ConditionFalse
-		// we want to requeue until the pod is marked as ready
-		result = reconcile.Result{Requeue: true}
 	}
 
+	now := metav1.NewTime(time.Now())
+
+	found := false
 	for i, c := range pod.Status.Conditions {
-		if c.Type == postprovision.ReadinessGate && c.Status != condValue {
-			pod.Status.Conditions[i].Status = condValue
-			return result, rpp.client.Status().Update(&pod)
+		if c.Type == postprovision.ReadinessGate {
+			found = true
+
+			if c.Status != condValue {
+				pod.Status.Conditions[i].Status = condValue
+				pod.Status.Conditions[i].LastTransitionTime = now
+			}
+
+			pod.Status.Conditions[i].LastProbeTime = now
 		}
 	}
 
-	return reconcile.Result{}, nil
+	if !found {
+		pod.Status.Conditions = append(pod.Status.Conditions, corev1.PodCondition{
+			Type:               postprovision.ReadinessGate,
+			Status:             condValue,
+			LastProbeTime:      now,
+			LastTransitionTime: now,
+		})
+	}
+
+	if err := c.Status().Update(&pod); err != nil {
+		if apierrors.IsConflict(err) {
+			return reconcile.Result{Requeue: true}, nil
+		}
+
+		return result, err
+	}
+
+	return result, nil
 }
