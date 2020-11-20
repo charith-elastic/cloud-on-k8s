@@ -92,6 +92,7 @@ RBAC permissions
   - ""
   resources:
   - pods
+  - pods/status
   - endpoints
   - events
   - persistentvolumeclaims

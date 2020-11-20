@@ -34,6 +34,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+const defaultTimeout = 15 * time.Minute
+
 var (
 	errNoAvailablePods = errors.New("no available Elasticsearch pods")
 	errResourceDeleted = errors.New("resource deleted")
@@ -132,7 +134,12 @@ func waitForElasticsearch(ctx context.Context, k8sclient client.Client, jd *JobD
 		},
 	}
 
-	ctx, cancelFunc := context.WithTimeout(ctx, time.Duration(jd.NoProgressTimeout))
+	timeout := defaultTimeout
+	if jd.NoProgressTimeout > 0 {
+		timeout = time.Duration(jd.NoProgressTimeout)
+	}
+
+	ctx, cancelFunc := context.WithTimeout(ctx, timeout)
 	defer cancelFunc()
 
 	if err := watchObject(ctx, jd.Target.Namespace, handler, &esv1.Elasticsearch{}); err != nil {

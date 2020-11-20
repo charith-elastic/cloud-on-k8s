@@ -120,6 +120,10 @@ func (rpp *reconcilePostProvision) Reconcile(request reconcile.Request) (reconci
 
 	var es esv1.Elasticsearch
 	if err := c.Get(client.ObjectKey{Namespace: pod.Namespace, Name: esName}, &es); err != nil {
+		if apierrors.IsNotFound(err) {
+			return result, nil
+		}
+
 		return result, err
 	}
 
