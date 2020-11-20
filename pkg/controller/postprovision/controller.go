@@ -43,7 +43,6 @@ func Add(mgr manager.Manager, p operator.Parameters) error {
 	return addWatches(c, r.client)
 }
 
-// newReconciler returns a new reconcile.Reconciler
 func newReconciler(mgr manager.Manager, params operator.Parameters) *reconcilePostProvision {
 	c := k8s.WrapClient(mgr.GetClient())
 	return &reconcilePostProvision{Parameters: params, client: c}
@@ -148,6 +147,10 @@ func (rpp *reconcilePostProvision) Reconcile(request reconcile.Request) (reconci
 
 	var pod corev1.Pod
 	if err := c.Get(request.NamespacedName, &pod); err != nil {
+		if apierrors.IsNotFound(err) {
+			return result, nil
+		}
+
 		return result, err
 	}
 
