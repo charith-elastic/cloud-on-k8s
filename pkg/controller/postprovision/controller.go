@@ -50,11 +50,53 @@ func newReconciler(mgr manager.Manager, params operator.Parameters) *reconcilePo
 }
 
 func addWatches(ctrlr controller.Controller, c k8s.Client) error {
+	// watch Elasticsearch clusters
+	err := ctrlr.Watch(
+		&source.Kind{Type: &esv1.Elasticsearch{}},
+		&handler.EnqueueRequestsFromMapFunc{
+			ToRequests: handler.ToRequestsFunc(func(object handler.MapObject) []reconcile.Request {
+				es, ok := object.Object.(*esv1.Elasticsearch)
+				if !ok {
+					return nil
+				}
+
+				// find pods that have the readiness gate defined
+				var requests []reconcile.Request
+				for _, ns := range es.Spec.NodeSets {
+					for _, rg := range ns.PodTemplate.Spec.ReadinessGates {
+						if rg.ConditionType == postprovision.ReadinessGate {
+							sts := esv1.StatefulSet(es.Name, ns.Name)
+							selector := label.NewStatefulSetLabels(k8s.ExtractNamespacedName(es), sts)
+
+							var pods corev1.PodList
+							if err := c.List(&pods, client.MatchingLabels(selector)); err != nil {
+								return nil
+							}
+
+							for _, p := range pods.Items {
+								requests = append(requests, reconcile.Request{
+									NamespacedName: types.NamespacedName{
+										Namespace: p.GetNamespace(),
+										Name:      p.GetName(),
+									},
+								})
+							}
+						}
+					}
+				}
+
+				return requests
+			}),
+		})
+	if err != nil {
+		return err
+	}
+
 	// Watch pods belonging to ES clusters that have a readiness gate
 	return ctrlr.Watch(
 		&source.Kind{Type: &corev1.Pod{}},
-		&handler.EnqueueRequestsFromMapFunc{ToRequests: handler.ToRequestsFunc(
-			func(object handler.MapObject) []reconcile.Request {
+		&handler.EnqueueRequestsFromMapFunc{
+			ToRequests: handler.ToRequestsFunc(func(object handler.MapObject) []reconcile.Request {
 				labels := object.Meta.GetLabels()
 
 				if len(labels) == 0 {
@@ -86,7 +128,8 @@ func addWatches(ctrlr controller.Controller, c k8s.Client) error {
 				}
 
 				return nil
-			})})
+			}),
+		})
 }
 
 type reconcilePostProvision struct {
